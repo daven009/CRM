@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import "./App.css";
 import { C, EVT, MOCK_HISTORY, MOCK_SCENARIOS } from "./data/mockData";
 import VoiceView from "./components/VoiceView";
@@ -18,6 +18,7 @@ export default function App() {
   const [aiTyping, setAiTyping] = useState(false);
   const [cardSort, setCardSort] = useState("priority");
   const [logDate, setLogDate] = useState(null);
+  const [cardsLogOpen, setCardsLogOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("account");
   const [detailChat, setDetailChat] = useState(false);
   const [detailConvos, setDetailConvos] = useState([]);
@@ -33,6 +34,13 @@ export default function App() {
   const events = useMemo(() => EVT(C), []);
 
   const hpColor = (hp) => hp >= 75 ? "#2d6a4f" : hp >= 45 ? "#b45309" : "#c0392b";
+
+  useEffect(() => {
+    if (view !== "cards") {
+      setCardsLogOpen(false);
+      setLogDate(null);
+    }
+  }, [view]);
 
   // Simulate AI response
   const sendMsg = (text) => {
@@ -276,7 +284,30 @@ export default function App() {
         <VoiceView setView={setView} setSettingsTab={setSettingsTab} setRecording={setRecording} recording={recording} userText={userText} setUserText={setUserText} sendMsg={sendMsg} aiTyping={aiTyping} convos={convos} events={events} newConvo={newConvo} C={C} markDone={markDone} handleTask={handleTask} activeTask={activeTask} addContact={addContact} setConvos={setConvos} />
       )}
       {view === "cards" && (
-        <CardsView C={C} cardSort={cardSort} setCardSort={setCardSort} setSel={setSel} setView={setView} />
+        <>
+          <CardsView
+            C={C}
+            cardSort={cardSort}
+            setCardSort={setCardSort}
+            setSel={setSel}
+            setView={setView}
+            onOpenLog={() => setCardsLogOpen(true)}
+          />
+          {cardsLogOpen && (
+            <div className="cards-log-overlay">
+              <LogView
+                setView={setView}
+                history={history}
+                logDate={logDate}
+                setLogDate={setLogDate}
+                onBack={() => {
+                  setCardsLogOpen(false);
+                  setLogDate(null);
+                }}
+              />
+            </div>
+          )}
+        </>
       )}
       {view === "detail" && (
         <DetailView sel={sel} setSel={setSel} setView={setView} hpColor={hpColor} detailChat={detailChat} setDetailChat={setDetailChat} detailConvos={detailConvos} setDetailConvos={setDetailConvos} detailText={detailText} setDetailText={setDetailText} detailTyping={detailTyping} detailSend={detailSend} startNewDetailSession={startNewDetailSession} closeDetailChat={closeDetailChat} recording={recording} setRecording={setRecording} detailRef={detailRef} />

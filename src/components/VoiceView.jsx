@@ -70,7 +70,6 @@ export default function VoiceView({
         <span className="brand-text">RelateAI</span>
         <div className="flex-gap-12">
           <button onClick={() => setView("log")} className="text-mono-12 text-gray">log</button>
-          {convos.length > 0 && <button onClick={newConvo} className="text-mono-12 text-red">{activeTask ? "close" : "new"}</button>}
         </div>
       </div>
 
@@ -155,10 +154,16 @@ export default function VoiceView({
           <input value={userText} onChange={e => setUserText(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMsg(userText)} placeholder="type here..." className="input-field" />
           {userText && <button onClick={() => sendMsg(userText)} className="action-btn text-red">send</button>}
         </div>
-        <div className="record-btn-container">
+        <div className="record-row">
+          <div className="record-side-slot" aria-hidden="true" />
           <button onMouseDown={() => setRecording(true)} onMouseUp={() => { setRecording(false); sendMsg("今天该联系谁") }} onMouseLeave={() => setRecording(false)} onTouchStart={() => setRecording(true)} onTouchEnd={() => { setRecording(false); sendMsg("今天该联系谁") }} className={`record-btn ${recording ? 'active' : 'inactive'}`}>
             <div className={`record-inner ${recording ? 'active' : 'inactive'}`} />
           </button>
+          <div className="record-side-slot record-side-slot-right">
+            {convos.length > 0 && (
+              <button onClick={newConvo} className="voice-new-bottom-btn text-mono-12 text-red">{activeTask ? "close" : "new"}</button>
+            )}
+          </div>
         </div>
         <div className="record-hint">{recording ? "listening..." : "hold to speak"}</div>
       </div>

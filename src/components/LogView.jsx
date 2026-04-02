@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { C, WEEKDAYS, MONTH_NAMES } from "../data/mockData";
 
-export default function LogView({ setView, history, logDate, setLogDate }) {
+export default function LogView({ setView, history, logDate, setLogDate, onBack }) {
   // Start at March 2024 to match our '03.xx' mock dates
   const [currentMonth, setCurrentMonth] = useState(new Date(2024, 2, 1)); 
   const [selectedDay, setSelectedDay] = useState("03.21");
@@ -80,7 +80,7 @@ export default function LogView({ setView, history, logDate, setLogDate }) {
     <div className="page" style={{ background: "#faf9f7" }}>
       <div className="top-spacer log-top-spacer" />
       <div className="log-header" style={{ paddingBottom: 8 }}>
-        <button onClick={() => setView("voice")} className="back-btn">← back</button>
+        <button onClick={() => (onBack ? onBack() : setView("voice"))} className="back-btn">← back</button>
         <span className="log-title">ACTIVITY LOG</span>
         <div style={{ width: 40 }} />
       </div>

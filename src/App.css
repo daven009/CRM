@@ -18,16 +18,16 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .text-gray { color: #999; }
 .text-red { color: #c0392b; }
 .text-green { color: #2d6a4f; }
-.bottom-tab { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; gap: 32px; padding: 8px 0 12px; background: linear-gradient(transparent,#faf9f7 30%); z-index: 10; }
+.bottom-tab { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; justify-content: center; gap: 32px; padding: 8px 0 12px; background: linear-gradient(transparent,#faf9f7 30%); z-index: 10; }
 .tab-btn { font-size: 11px; font-family: 'IBM Plex Mono', monospace; color: #999; }
 .tab-btn.active { color: #1a1a1a; font-weight: 500; border-bottom: 1px solid #1a1a1a; padding-bottom: 2px; }
 
 /* ── VOICE VIEW ── */
-.suggestion-box { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 32px; }
+.suggestion-box { flex: 0 0 520px; display: flex; flex-direction: column; justify-content: center; padding: 0 32px; }
 .suggestion-text { font-size: 18px; line-height: 1.8; font-style: italic; color: #333; text-align: center; letter-spacing: -0.2px; animation: fadeUp 0.6s ease; }
 .suggestion-actions { display: flex; justify-content: center; gap: 20px; margin-top: 24px; animation: fadeUp 0.6s ease 0.1s both; }
 .action-btn { font-size: 12px; font-family: 'IBM Plex Mono', monospace; font-weight: 500; }
-.chat-area { flex: 1; overflow: auto; padding: 8px 20px; display: flex; flex-direction: column; }
+.chat-area { height: 520px; min-height: 520px; max-height: 520px; overflow: auto; padding: 8px 20px; display: flex; flex-direction: column; }
 .chat-row { display: flex; margin-bottom: 12px; animation: fadeUp 0.25s ease; }
 .chat-row.user { justify-content: flex-end; }
 .chat-row.ai { justify-content: flex-start; }
@@ -44,7 +44,10 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .input-area { padding: 12px 24px 40px; flex-shrink: 0; }
 .input-row { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; }
 .input-field { flex: 1; padding: 10px 14px; border-radius: 24px; border: 1px solid rgba(0,0,0,0.08); font-size: 13px; font-family: 'Lora', 'Noto Sans SC', serif; background: rgba(0,0,0,0.02); color: #1a1a1a; }
-.record-btn-container { display: flex; justify-content: center; }
+.record-row { display: flex; align-items: center; justify-content: center; }
+.record-side-slot { width: 82px; height: 64px; flex-shrink: 0; }
+.record-side-slot-right { display: flex; align-items: center; justify-content: flex-end; }
+.voice-new-bottom-btn { min-width: 48px; text-align: center; }
 .record-btn { width: 64px; height: 64px; border-radius: 32px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
 .record-btn.inactive { background: #1a1a1a; }
 .record-btn.active { background: #c0392b; animation: recording 1s ease infinite; }
@@ -54,6 +57,7 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .record-hint { text-align: center; margin-top: 8px; font-size: 10px; font-family: 'IBM Plex Mono', monospace; color: #ccc; letter-spacing: 0.5px; }
 
 /* ── CARDS VIEW ── */
+.cards-top-left-spacer { width: 32px; height: 32px; flex-shrink: 0; }
 .search-container { padding: 0 24px 6px; }
 .search-input { width: 100%; padding: 10px 14px; border-radius: 12px; border: none; font-size: 13px; font-family: 'IBM Plex Mono', monospace; background: rgba(0,0,0,0.04); color: #1a1a1a; letter-spacing: 0.3px; }
 .sort-toggle { display: flex; gap: 0; margin: 0 24px 6px; background: rgba(0,0,0,0.03); border-radius: 8px; padding: 2px; }
@@ -324,6 +328,8 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .settings-plan-current { border: 2px solid #1a1a1a; }
 .settings-usage-bar { height: 4px; background: rgba(0,0,0,0.06); border-radius: 2px; margin-top: 8px; }
 .settings-usage-fill { width: 25%; height: 100%; background: #c0392b; border-radius: 2px; }
+
+.cards-log-overlay { position: absolute; inset: 0; z-index: 30; }
 
 /* ── ANIMATIONS KEYFRAMES ── */
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }

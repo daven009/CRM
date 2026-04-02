@@ -1,10 +1,18 @@
 import React, { useState } from "react";
 
-export default function CardsView({ C, cardSort, setCardSort, setSel, setView }) {
+export default function CardsView({ C, cardSort, setCardSort, setSel, setView, onOpenLog }) {
   const [search, setSearch] = useState("");
   return (
     <div className="page">
       <div className="top-spacer" />
+
+      <div className="top-bar">
+        <div className="cards-top-left-spacer" aria-hidden="true" />
+        <span className="brand-text">RelateAI</span>
+        <div className="flex-gap-12">
+          <button onClick={() => (onOpenLog ? onOpenLog() : setView("log"))} className="text-mono-12 text-gray">log</button>
+        </div>
+      </div>
 
       <div className="search-container">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="search" className="search-input" />
