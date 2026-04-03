@@ -16,6 +16,14 @@ export default function VoiceView({
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [convos]);
 
+  useEffect(() => {
+    if (contactCard || updateCard) {
+      setTimeout(() => {
+        scrollRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      }, 0);
+    }
+  }, [contactCard, updateCard]);
+
   // Check if the latest AI message has inline actions
   useEffect(() => {
     if (convos.length > 0) {

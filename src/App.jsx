@@ -74,7 +74,10 @@ export default function App() {
       const targetClient = C.find(c => lo.includes(c.n.toLowerCase()));
 
       if (targetClient) {
-        if (lo.includes("修改") || lo.includes("更新") || lo.includes("改为") || lo.includes("改成") || lo.includes("update")) {
+        const isModifyIntent = lo.includes("修改") || lo.includes("更新") || lo.includes("改为") || lo.includes("改成") || lo.includes("update");
+        const isNaturalCompanyChange = lo.includes("换公司") || lo.includes("跳槽") || lo.includes("入职") || lo.includes("加入");
+
+        if (isModifyIntent || isNaturalCompanyChange) {
           const updates = {};
 
           const bdYmdMatch = text.match(/生日[^，。,\n]*?(\d{4})[年.\/-](\d{1,2})[月.\/-](\d{1,2})/u);
@@ -93,10 +96,14 @@ export default function App() {
           if (roleMatch?.[1]) updates.role = roleMatch[1].trim();
 
           const companyMatch = text.match(/(?:公司|company)[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([^，。,\n]+)/iu);
+          const naturalCompanyMatch = text.match(/(?:换到|跳槽到|加入|入职|去了|到)\s*([^，。,\n]+)/u);
           if (companyMatch?.[1]) updates.co = companyMatch[1].trim();
+          else if (naturalCompanyMatch?.[1]) updates.co = naturalCompanyMatch[1].trim();
 
-          if (Object.keys(updates).length > 0) {
-            reply = `好的，我帮你更新${targetClient.n}的信息，请确认：`;
+          if (Object.keys(updates).length > 0 || isNaturalCompanyChange) {
+            reply = isNaturalCompanyChange && !updates.co
+              ? `收到，你说${targetClient.n}换公司了。请在下面填写新公司并确认。`
+              : `好的，我帮你更新${targetClient.n}的信息，请确认：`;
             action = {
               type: "update_contact",
               clientId: targetClient.id,
