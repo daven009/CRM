@@ -46,7 +46,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
 
   const calendarDays = generateCalendar();
   
-  const anniversaryClients = C.filter(client => client.bd && client.bd === selectedDay);
+  const anniversaryClients = C.filter(client => client.bd && getBirthdayMMDD(client.bd) === selectedDay);
   const selectedDayData = calendarDays.find(d => d && d.dateStr === selectedDay);
   const dayTodosDisplay = selectedDayData ? selectedDayData.todos.map((td, idx) => ({
     id: `todo-${td.clientName}-${idx}`,
@@ -104,7 +104,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
             const isSelected = selectedDay === d.dateStr;
             const dots = [];
             
-            const hasAnniversary = C.some(client => client.bd && client.bd === d.dateStr);
+            const hasAnniversary = C.some(client => client.bd && getBirthdayMMDD(client.bd) === d.dateStr);
             if (hasAnniversary) {
               dots.push(<div key="anni" className="log-dot" style={{ background: "#c0392b" }} />);
             }

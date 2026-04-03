@@ -85,7 +85,6 @@ export default function DetailView({
         <div className="detail-identity detail-identity-top">
           <div className="detail-name-row">
             <span className="detail-name">{sel.n}</span>
-            <span className="detail-sub">{sel.sub}</span>
           </div>
           <div className="detail-role">{sel.co} · {sel.role}</div>
           <div className="detail-meta-row">

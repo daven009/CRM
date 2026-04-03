@@ -2,20 +2,21 @@ import React, { useRef, useEffect, useState } from "react";
 
 export default function VoiceView({
   setView, setSettingsTab, setRecording, recording, userText, setUserText,
-  sendMsg, aiTyping, convos, events, newConvo, C, markDone, handleTask, activeTask,
-  addContact, setConvos
+  sendMsg, aiTyping, convos, events, newConvo, markDone, handleTask, activeTask,
+  addContact, updateContact, setConvos
 }) {
   const scrollRef = useRef(null);
   const [topIndex, setTopIndex] = useState(0);
 
   // Inline contact card state
   const [contactCard, setContactCard] = useState(null); // { name, company, msgIndex }
+  const [updateCard, setUpdateCard] = useState(null); // { clientId, co, role, bd, ps, msgIndex }
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [convos]);
 
-  // Check if the latest AI message has a new_contact action
+  // Check if the latest AI message has inline actions
   useEffect(() => {
     if (convos.length > 0) {
       const last = convos[convos.length - 1];
@@ -26,8 +27,18 @@ export default function VoiceView({
           msgIndex: convos.length - 1
         });
       }
+      if (last.r === "ai" && last.action?.type === "update_contact" && !updateCard) {
+        setUpdateCard({
+          clientId: last.action.clientId,
+          co: last.action.updates?.co || "",
+          role: last.action.updates?.role || "",
+          bd: last.action.updates?.bd || "",
+          ps: last.action.updates?.ps || "",
+          msgIndex: convos.length - 1
+        });
+      }
     }
-  }, [convos]);
+  }, [convos, contactCard, updateCard]);
 
   const confirmContact = () => {
     if (!contactCard || !contactCard.name.trim()) return;
@@ -58,6 +69,41 @@ export default function VoiceView({
       return next;
     });
     setContactCard(null);
+  };
+
+  const confirmUpdate = () => {
+    if (!updateCard) return;
+    const updated = updateContact(updateCard.clientId, {
+      co: updateCard.co.trim(),
+      role: updateCard.role.trim(),
+      bd: updateCard.bd.trim(),
+      ps: updateCard.ps.trim()
+    });
+    setConvos(p => {
+      const next = [...p];
+      next[updateCard.msgIndex] = {
+        ...next[updateCard.msgIndex],
+        t: updated ? `✅ 已更新${updated.n}的资料（公司、职位、生日、性格）。` : "未找到该联系人，更新失败。",
+        action: null
+      };
+      return next;
+    });
+    setUpdateCard(null);
+  };
+
+  const dismissUpdate = () => {
+    setConvos(p => {
+      const next = [...p];
+      if (updateCard) {
+        next[updateCard.msgIndex] = {
+          ...next[updateCard.msgIndex],
+          t: "好的，已取消修改。",
+          action: null
+        };
+      }
+      return next;
+    });
+    setUpdateCard(null);
   };
 
   return (
@@ -124,6 +170,56 @@ export default function VoiceView({
                 <div className="contact-card-actions">
                   <button onClick={confirmContact} className="contact-card-confirm">✓ confirm</button>
                   <button onClick={dismissCard} className="contact-card-skip">skip</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {c.r === "ai" && c.action?.type === "update_contact" && updateCard && updateCard.msgIndex === i && (
+            <div className="contact-card-wrapper">
+              <div className="contact-card">
+                <div className="contact-card-title">UPDATE CONTACT</div>
+
+                <div className="contact-card-field">
+                  <div className="contact-card-label">COMPANY</div>
+                  <input
+                    value={updateCard.co}
+                    onChange={e => setUpdateCard(p => ({ ...p, co: e.target.value }))}
+                    className="contact-card-company-input"
+                  />
+                </div>
+
+                <div className="contact-card-field">
+                  <div className="contact-card-label">ROLE</div>
+                  <input
+                    value={updateCard.role}
+                    onChange={e => setUpdateCard(p => ({ ...p, role: e.target.value }))}
+                    className="contact-card-company-input"
+                  />
+                </div>
+
+                <div className="contact-card-field">
+                  <div className="contact-card-label">BIRTHDAY (YYYY.MM.DD)</div>
+                  <input
+                    value={updateCard.bd}
+                    onChange={e => setUpdateCard(p => ({ ...p, bd: e.target.value }))}
+                    placeholder="e.g. 1990.05.10"
+                    className="contact-card-company-input"
+                  />
+                </div>
+
+                <div className="contact-card-field-last">
+                  <div className="contact-card-label">PERSONALITY</div>
+                  <input
+                    value={updateCard.ps}
+                    onChange={e => setUpdateCard(p => ({ ...p, ps: e.target.value }))}
+                    className="contact-card-company-input"
+                  />
+                </div>
+
+                <div className="contact-card-actions">
+                  <button onClick={confirmUpdate} className="contact-card-confirm">✓ confirm</button>
+                  <button onClick={dismissUpdate} className="contact-card-skip">skip</button>
                 </div>
               </div>
             </div>

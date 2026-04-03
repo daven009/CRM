@@ -18,7 +18,7 @@ export default function CardsView({ C, cardSort, setCardSort, setSel, setView, o
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="search" className="search-input" />
       </div>
       <div className="sort-toggle">
-        {[{ id: "priority", label: "建议" }, { id: "alpha", label: "姓名" }].map(s => (
+        {[{ id: "priority", label: "recommended" }, { id: "alpha", label: "names" }].map(s => (
           <button key={s.id} onClick={() => setCardSort(s.id)} className={`sort-btn ${cardSort === s.id ? 'active' : 'inactive'}`}>
             {s.label}
           </button>

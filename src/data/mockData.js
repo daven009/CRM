@@ -6,7 +6,7 @@ export const C = [
     co: "Prudential",
     role: "Senior Manager",
     hp: 92,
-    bd: "03.15",
+    bd: "1989.03.15",
     ps: "理性务实",
     traits: [
       "⛳ 高尔夫",
@@ -159,7 +159,7 @@ export const C = [
     co: "Baker McKenzie",
     role: "Partner",
     hp: 65,
-    bd: "01.25",
+    bd: "1985.01.25",
     ps: "严谨专业",
     traits: [
       "⛵ 帆船",

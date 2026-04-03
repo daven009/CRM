@@ -63,13 +63,56 @@ export default function App() {
       const lo = text.toLowerCase();
       let reply = "";
       let action = null;
-      
-      const targetClient = C.find(c => lo.includes(c.n.toLowerCase()) || (c.sub && lo.includes(c.sub.toLowerCase().split(' ')[0])));
-      
+
+      const normalizeBirthday = (year, month, day) => {
+        const yy = String(year).padStart(4, "0");
+        const mm = String(month).padStart(2, "0");
+        const dd = String(day).padStart(2, "0");
+        return `${yy}.${mm}.${dd}`;
+      };
+
+      const targetClient = C.find(c => lo.includes(c.n.toLowerCase()));
+
       if (targetClient) {
-        if (lo.includes("处理") || lo.includes("跟进") || lo.includes("拟") || lo.includes("写") || lo.includes("发消息")) {
+        if (lo.includes("修改") || lo.includes("更新") || lo.includes("改为") || lo.includes("改成") || lo.includes("update")) {
+          const updates = {};
+
+          const bdYmdMatch = text.match(/生日[^，。,\n]*?(\d{4})[年.\/-](\d{1,2})[月.\/-](\d{1,2})/u);
+          const bdMdMatch = text.match(/生日[^，。,\n]*?(\d{1,2})[月.\/-](\d{1,2})/u);
+          if (bdYmdMatch) {
+            updates.bd = normalizeBirthday(bdYmdMatch[1], bdYmdMatch[2], bdYmdMatch[3]);
+          } else if (bdMdMatch) {
+            const prevYear = (targetClient.bd || "").match(/^(\d{4})[.\/-]/)?.[1] || String(new Date().getFullYear());
+            updates.bd = normalizeBirthday(prevYear, bdMdMatch[1], bdMdMatch[2]);
+          }
+
+          const psMatch = text.match(/性格[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([^，。,\n]+)/u);
+          if (psMatch?.[1]) updates.ps = psMatch[1].trim();
+
+          const roleMatch = text.match(/(?:职位|岗位|role|title)[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([^，。,\n]+)/iu);
+          if (roleMatch?.[1]) updates.role = roleMatch[1].trim();
+
+          const companyMatch = text.match(/(?:公司|company)[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([^，。,\n]+)/iu);
+          if (companyMatch?.[1]) updates.co = companyMatch[1].trim();
+
+          if (Object.keys(updates).length > 0) {
+            reply = `好的，我帮你更新${targetClient.n}的信息，请确认：`;
+            action = {
+              type: "update_contact",
+              clientId: targetClient.id,
+              updates: {
+                co: updates.co ?? targetClient.co,
+                role: updates.role ?? targetClient.role,
+                bd: updates.bd ?? targetClient.bd,
+                ps: updates.ps ?? targetClient.ps
+              }
+            };
+          } else {
+            reply = `我可以帮你修改${targetClient.n}的公司、职位、生日（YYYY.MM.DD）和性格。你可以说：修改${targetClient.n}的生日为1990年5月10日。`;
+          }
+        } else if (lo.includes("处理") || lo.includes("跟进") || lo.includes("拟") || lo.includes("写") || lo.includes("发消息")) {
           const urgent = targetClient.todos.filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
-          reply = `好的，针对${targetClient.n}的性格标签（${targetClient.ps}），我为你草拟了关于「${urgent ? urgent.t.split('（')[0] : '随访问候'}」的跟进话术：\n\n「Hi ${targetClient.sub?.split(' ')[0] || targetClient.n}，${targetClient.log[0]?.tx ? `上次提到的${targetClient.log[0].tx.split('，')[0]}的事，` : ''}最近有新进展吗？方便时随时联系我。」\n\n你可以复制后发送给他。办理完毕后记得告诉我！`;
+          reply = `好的，针对${targetClient.n}的性格标签（${targetClient.ps}），我为你草拟了关于「${urgent ? urgent.t.split('（')[0] : '随访问候'}」的跟进话术：\n\n「Hi ${targetClient.n}，${targetClient.log[0]?.tx ? `上次提到的${targetClient.log[0].tx.split('，')[0]}的事，` : ''}最近有新进展吗？方便时随时联系我。」\n\n你可以复制后发送给他。办理完毕后记得告诉我！`;
           if (urgent) action = { type: "mark_done", client: targetClient.id, todo: urgent.t };
         } else if (lo.includes("礼物") || lo.includes("送")) {
           const g = targetClient.gifts || [];
@@ -254,7 +297,6 @@ export default function App() {
     const newContact = {
       id: newId,
       n: name,
-      sub: "",
       co: company || "Unknown",
       role: "",
       hp: 50,
@@ -278,10 +320,41 @@ export default function App() {
     return newContact;
   };
 
+  const updateContact = (clientId, updates) => {
+    const cc = C.find(c => c.id === clientId);
+    if (!cc) return null;
+
+    const changed = [];
+    if (updates.co !== undefined && updates.co !== cc.co) {
+      cc.co = updates.co;
+      changed.push("公司");
+    }
+    if (updates.role !== undefined && updates.role !== cc.role) {
+      cc.role = updates.role;
+      changed.push("职位");
+    }
+    if (updates.bd !== undefined && updates.bd !== cc.bd) {
+      cc.bd = updates.bd;
+      changed.push("生日");
+    }
+    if (updates.ps !== undefined && updates.ps !== cc.ps) {
+      cc.ps = updates.ps;
+      changed.push("性格");
+    }
+
+    if (changed.length > 0) {
+      const d = new Date();
+      const today = `${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+      cc.log.unshift({ dt: today, src: "系统", tx: `更新了${changed.join("、")}信息`, ai: null });
+    }
+
+    return cc;
+  };
+
   return (
     <div className="app-wrapper">
       {view === "voice" && (
-        <VoiceView setView={setView} setSettingsTab={setSettingsTab} setRecording={setRecording} recording={recording} userText={userText} setUserText={setUserText} sendMsg={sendMsg} aiTyping={aiTyping} convos={convos} events={events} newConvo={newConvo} C={C} markDone={markDone} handleTask={handleTask} activeTask={activeTask} addContact={addContact} setConvos={setConvos} />
+        <VoiceView setView={setView} setSettingsTab={setSettingsTab} setRecording={setRecording} recording={recording} userText={userText} setUserText={setUserText} sendMsg={sendMsg} aiTyping={aiTyping} convos={convos} events={events} newConvo={newConvo} markDone={markDone} handleTask={handleTask} activeTask={activeTask} addContact={addContact} updateContact={updateContact} setConvos={setConvos} />
       )}
       {view === "cards" && (
         <>
