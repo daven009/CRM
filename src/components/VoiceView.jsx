@@ -84,6 +84,7 @@ export default function VoiceView({
     const updated = updateContact(updateCard.clientId, {
       co: updateCard.co.trim(),
       role: updateCard.role.trim(),
+      tel: updateCard.tel.trim(),
       bd: updateCard.bd.trim(),
       ps: updateCard.ps.trim()
     });
@@ -136,7 +137,7 @@ export default function VoiceView({
           <div className="suggestion-text">{top ? <>{top.c.n}的{top.tx.replace(/ · .*/, "")}，{top.d < 0 ? `已经过了${Math.abs(top.d)}天。` : `还有${top.d}天。`}</> : "今天没有紧急事项。"}</div>
           {top && <div className="suggestion-actions">
             <button onClick={() => handleTask(top.c.id, top.tx)} className="action-btn text-red">handle</button>
-            <button onClick={() => markDone(top.c.id, top.tx)} className="action-btn text-green">done</button>
+            <button onClick={() => { markDone(top.c.id, top.tx); setTopIndex(p => p + 1); }} className="action-btn text-green">done</button>
             <button onClick={() => setTopIndex(p => p + 1)} className="action-btn text-gray">skip</button>
           </div>}
         </div>
@@ -202,6 +203,16 @@ export default function VoiceView({
                   <input
                     value={updateCard.role}
                     onChange={e => setUpdateCard(p => ({ ...p, role: e.target.value }))}
+                    className="contact-card-company-input"
+                  />
+                </div>
+
+                <div className="contact-card-field">
+                  <div className="contact-card-label">PHONE</div>
+                  <input
+                    value={updateCard.tel}
+                    onChange={e => setUpdateCard(p => ({ ...p, tel: e.target.value }))}
+                    placeholder="e.g. +65 9123 4567"
                     className="contact-card-company-input"
                   />
                 </div>

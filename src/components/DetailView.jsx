@@ -87,6 +87,7 @@ export default function DetailView({
             <span className="detail-name">{sel.n}</span>
           </div>
           <div className="detail-role">{sel.co} · {sel.role}</div>
+          <div className="detail-role">📞 {sel.tel || "未填写电话"}</div>
           <div className="detail-meta-row">
             <span className="meta-text">{sel.bd}</span>
             <span className="meta-dot-text">·</span>

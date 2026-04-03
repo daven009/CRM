@@ -35,7 +35,7 @@ export default function CardsView({ C, cardSort, setCardSort, setSel, setView, o
           const bU2 = b.todos.filter(t => !t.done).length;
           if (aU2 !== bU2) return bU2 - aU2;
           return a.hp - b.hp;
-        }).filter(c => c.n.includes(search) || c.co.includes(search)).map((c, i) => {
+        }).filter(c => c.n.includes(search) || c.co.includes(search) || (c.tel || "").includes(search)).map((c, i) => {
           const urgent = c.todos.filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
           return (
             <button key={i} onClick={() => { setSel(c); setView("detail") }} className="card-item" style={{ animation: `fadeUp 0.3s ease ${i * 0.04}s both` }}>

@@ -31,7 +31,8 @@ export default function App() {
   const [aiPrompt, setAiPrompt] = useState("你是一个专业且亲和的保险顾问。了解新加坡市场，善于维护关系。语气温暖但专业。根据客户画像和互动记录生成个性化建议。");
 
   const [aiTone, setAiTone] = useState("casual");
-  const events = useMemo(() => EVT(C), []);
+  const [eventsVersion, setEventsVersion] = useState(0);
+  const events = useMemo(() => EVT(C), [eventsVersion]);
 
   const hpColor = (hp) => hp >= 75 ? "#2d6a4f" : hp >= 45 ? "#b45309" : "#c0392b";
 
@@ -100,6 +101,11 @@ export default function App() {
           if (companyMatch?.[1]) updates.co = companyMatch[1].trim();
           else if (naturalCompanyMatch?.[1]) updates.co = naturalCompanyMatch[1].trim();
 
+          const phoneStrictMatch = text.match(/(?:电话|电话号码|手机号|手机|phone|mobile)[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([+\d][\d\s-]{5,20})/iu);
+          const phoneLooseMatch = text.match(/(?:更新|修改|改)?[^，。,\n]*?(?:电话|电话号码|手机号|手机|phone|mobile)\s*(?:为|成)?\s*([+\d][\d\s-]{5,20})/iu);
+          const parsedPhone = (phoneStrictMatch?.[1] || phoneLooseMatch?.[1] || "").trim();
+          if (parsedPhone) updates.tel = parsedPhone;
+
           if (Object.keys(updates).length > 0 || isNaturalCompanyChange) {
             reply = isNaturalCompanyChange && !updates.co
               ? `收到，你说${targetClient.n}换公司了。请在下面填写新公司并确认。`
@@ -111,11 +117,12 @@ export default function App() {
                 co: updates.co ?? targetClient.co,
                 role: updates.role ?? targetClient.role,
                 bd: updates.bd ?? targetClient.bd,
-                ps: updates.ps ?? targetClient.ps
+                ps: updates.ps ?? targetClient.ps,
+                tel: updates.tel ?? targetClient.tel ?? ""
               }
             };
           } else {
-            reply = `我可以帮你修改${targetClient.n}的公司、职位、生日（YYYY.MM.DD）和性格。你可以说：修改${targetClient.n}的生日为1990年5月10日。`;
+            reply = `我可以帮你修改${targetClient.n}的公司、职位、电话、生日（YYYY.MM.DD）和性格。你可以说：修改${targetClient.n}的电话为+65 9123 4567。`;
           }
         } else if (lo.includes("处理") || lo.includes("跟进") || lo.includes("拟") || lo.includes("写") || lo.includes("发消息")) {
           const urgent = targetClient.todos.filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
@@ -196,7 +203,19 @@ export default function App() {
     if (activeTask && activeTask.todo === todoTx) {
       setConvos([]);
       setActiveTask(null);
+    } else {
+      setConvos(p => {
+        if (p.length === 0) return p;
+        const next = [...p];
+        const last = next[next.length - 1];
+        if (last?.action?.type === "mark_done" && last.action.client === clientId && last.action.todo === todoTx) {
+          next[next.length - 1] = { ...last, action: null };
+        }
+        return next;
+      });
     }
+
+    setEventsVersion(v => v + 1);
   };
 
   const startNewDetailSession = () => {
@@ -306,6 +325,7 @@ export default function App() {
       n: name,
       co: company || "Unknown",
       role: "",
+      tel: "",
       hp: 50,
       bd: "",
       ps: "待了解",
@@ -347,6 +367,10 @@ export default function App() {
     if (updates.ps !== undefined && updates.ps !== cc.ps) {
       cc.ps = updates.ps;
       changed.push("性格");
+    }
+    if (updates.tel !== undefined && updates.tel !== cc.tel) {
+      cc.tel = updates.tel;
+      changed.push("电话");
     }
 
     if (changed.length > 0) {

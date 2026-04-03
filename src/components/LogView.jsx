@@ -12,6 +12,18 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
     return `${mm}.${dd}`;
   };
 
+  const getBirthdayMMDD = (bd) => {
+    if (!bd) return "";
+    const val = String(bd).trim();
+    const ymd = val.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+    if (ymd) return `${String(ymd[2]).padStart(2, "0")}.${String(ymd[3]).padStart(2, "0")}`;
+
+    const md = val.match(/^(\d{1,2})[./-](\d{1,2})$/);
+    if (md) return `${String(md[1]).padStart(2, "0")}.${String(md[2]).padStart(2, "0")}`;
+
+    return "";
+  };
+
   const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
   const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay(); // 0 = Sunday
 
