@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="2580" viewBox="0 0 1800 2580" role="img" aria-labelledby="title desc">
+  <title id="title">CRM Query Engine Step 2 Flow</title>
+  <desc id="desc">Current /engine/respond flow including understanding, contact resolution, query path, and action planning path.</desc>
+  <defs>
+    <style>
+      .bg { fill: #f7f3eb; }
+      .panel { fill: #fffdf8; stroke: #d7cdbc; stroke-width: 2; rx: 24; ry: 24; }
+      .step { fill: #e4f3ef; stroke: #0f766e; stroke-width: 2; rx: 20; ry: 20; }
+      .decision { fill: #fff6e8; stroke: #b45309; stroke-width: 2; }
+      .result { fill: #eef5ff; stroke: #3b82f6; stroke-width: 2; rx: 20; ry: 20; }
+      .danger { fill: #fff1f2; stroke: #be123c; stroke-width: 2; rx: 20; ry: 20; }
+      .text { font-family: "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2a30; font-size: 30px; }
+      .small { font-size: 24px; fill: #4b5b63; }
+      .tiny { font-size: 22px; fill: #5f6f78; }
+      .head { font-size: 42px; font-weight: 700; }
+      .subhead { font-size: 28px; font-weight: 700; fill: #0f766e; }
+      .arrow { stroke: #55656d; stroke-width: 4; fill: none; marker-end: url(#arrowhead); }
+      .label { font-size: 22px; fill: #7c4a03; font-weight: 600; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#55656d" />
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1800" height="2580" />
+  <rect class="panel" x="40" y="40" width="1720" height="2500" />
+
+  <text class="text head" x="90" y="115">CRM Query Engine 当前主流程图（Step 2 完成态）</text>
+  <text class="text small" x="90" y="160">入口：/engine/respond。核心阶段：Understanding → Contact Resolution → Query / Action Route → Response</text>
+
+  <rect class="step" x="620" y="210" width="560" height="90" rx="20" ry="20" />
+  <text class="text" x="708" y="266">用户输入 /engine/respond</text>
+
+  <line class="arrow" x1="900" y1="300" x2="900" y2="360" />
+
+  <rect class="step" x="480" y="360" width="840" height="180" rx="20" ry="20" />
+  <text class="text subhead" x="520" y="412">Step 1 Understanding</text>
+  <text class="text" x="520" y="458">LLM output：primary_interaction_type + semantic_facets + confidence</text>
+  <text class="text" x="520" y="498">Local detector：只补 facets，不直接决定主标签</text>
+  <text class="text" x="520" y="538">Arbitration：优先保留 LLM，必要时提升为 mixed，写入 arbitration_notes</text>
+
+  <line class="arrow" x1="900" y1="540" x2="900" y2="610" />
+
+  <polygon class="decision" points="900,610 1090,720 900,830 710,720" />
+  <text class="text" x="790" y="708">是否在回答上一轮</text>
+  <text class="text" x="824" y="746">pending_question？</text>
+
+  <line class="arrow" x1="710" y1="720" x2="420" y2="720" />
+  <text class="text label" x="560" y="700">是</text>
+  <rect class="step" x="80" y="640" width="340" height="160" rx="20" ry="20" />
+  <text class="text" x="116" y="694">结合 session_state</text>
+  <text class="text" x="116" y="734">处理联系人选择 / 确认</text>
+  <text class="text" x="116" y="774">或动作选择 / 动作确认</text>
+
+  <line class="arrow" x1="900" y1="830" x2="900" y2="910" />
+  <text class="text label" x="928" y="886">否</text>
+
+  <rect class="step" x="470" y="910" width="860" height="180" rx="20" ry="20" />
+  <text class="text subhead" x="510" y="962">Step 2 Contact Resolution</text>
+  <text class="text" x="510" y="1008">LLM-first clue extraction：person_name / company / phone / email / wechat / title_hint</text>
+  <text class="text" x="510" y="1048">Rule-based resolution：候选召回、排序、状态裁决</text>
+  <text class="text tiny" x="510" y="1084">最终状态仍由代码决定：resolved / ambiguous / not_found / unresolved</text>
+
+  <line class="arrow" x1="900" y1="1090" x2="900" y2="1160" />
+
+  <polygon class="decision" points="900,1160 1120,1280 900,1400 680,1280" />
+  <text class="text" x="820" y="1268">contact status</text>
+  <text class="text" x="838" y="1306">是什么？</text>
+
+  <line class="arrow" x1="680" y1="1280" x2="380" y2="1280" />
+  <text class="text label" x="462" y="1260">unresolved / not_found / ambiguous</text>
+  <rect class="danger" x="80" y="1185" width="300" height="190" rx="20" ry="20" />
+  <text class="text" x="130" y="1242">mode = resolve_contact</text>
+  <text class="text" x="130" y="1290">pending_question.type</text>
+  <text class="text" x="130" y="1330">= contact_resolution</text>
+
+  <line class="arrow" x1="1120" y1="1280" x2="1430" y2="1280" />
+  <text class="text label" x="1170" y="1260">resolved 且 confirmation_required</text>
+  <rect class="result" x="1430" y="1185" width="280" height="190" rx="20" ry="20" />
+  <text class="text" x="1478" y="1242">mode = confirm</text>
+  <text class="text" x="1478" y="1290">pending_question.type</text>
+  <text class="text" x="1478" y="1330">= contact_resolution</text>
+
+  <line class="arrow" x1="900" y1="1400" x2="900" y2="1490" />
+  <text class="text label" x="938" y="1460">resolved 且 confirmed_contact_id</text>
+
+  <rect class="step" x="510" y="1490" width="780" height="150" rx="20" ry="20" />
+  <text class="text subhead" x="550" y="1542">Step 3 Route Decision</text>
+  <text class="text" x="550" y="1588">主流程优先参考：semantic_facets + query_intent + action_intent + 上下文</text>
+  <text class="text tiny" x="550" y="1624">primary_interaction_type 主要用于展示、调试和高层提示</text>
+
+  <line class="arrow" x1="900" y1="1640" x2="900" y2="1710" />
+
+  <polygon class="decision" points="900,1710 1120,1820 900,1930 680,1820" />
+  <text class="text" x="800" y="1808">是否进入纯 query path？</text>
+  <text class="text tiny" x="760" y="1846">has_query 且没有 task/craft 等动作语义</text>
+
+  <line class="arrow" x1="680" y1="1820" x2="340" y2="1820" />
+  <text class="text label" x="516" y="1800">是</text>
+  <rect class="result" x="70" y="1710" width="270" height="220" rx="20" ry="20" />
+  <text class="text" x="122" y="1766">Query Executor</text>
+  <text class="text small" x="102" y="1812">支持：联系方式 / 公司</text>
+  <text class="text small" x="102" y="1848">职位 / profile / notes</text>
+  <text class="text small" x="102" y="1884">open tasks 摘要</text>
+
+  <line class="arrow" x1="1120" y1="1820" x2="1460" y2="1820" />
+  <text class="text label" x="1188" y="1800">否</text>
+  <rect class="step" x="1460" y="1710" width="270" height="220" rx="20" ry="20" />
+  <text class="text" x="1510" y="1766">Action Planner</text>
+  <text class="text small" x="1496" y="1812">生成 proposed_actions</text>
+  <text class="text small" x="1496" y="1848">+ summary</text>
+  <text class="text small" x="1496" y="1884">+ pending_question</text>
+
+  <line class="arrow" x1="205" y1="1930" x2="205" y2="2010" />
+  <rect class="result" x="70" y="2010" width="270" height="170" rx="20" ry="20" />
+  <text class="text" x="122" y="2068">mode = answer</text>
+  <text class="text small" x="104" y="2112">pending_question = null</text>
+  <text class="text small" x="104" y="2148">直接返回查询结果</text>
+
+  <line class="arrow" x1="1595" y1="1930" x2="1595" y2="2010" />
+  <polygon class="decision" points="1595,2010 1735,2100 1595,2190 1455,2100" />
+  <text class="text small" x="1528" y="2088">动作状态</text>
+  <text class="text small" x="1518" y="2124">如何推进？</text>
+
+  <line class="arrow" x1="1455" y1="2100" x2="1210" y2="2100" />
+  <text class="text label" x="1276" y="2080">缺参数</text>
+  <rect class="result" x="930" y="2020" width="280" height="160" rx="20" ry="20" />
+  <text class="text" x="996" y="2076">mode = clarify</text>
+  <text class="text small" x="966" y="2120">pending_question.type</text>
+  <text class="text small" x="1000" y="2154">= slot_filling</text>
+
+  <line class="arrow" x1="1595" y1="2190" x2="1595" y2="2270" />
+  <text class="text label" x="1620" y="2240">已准备动作</text>
+
+  <rect class="result" x="1280" y="2270" width="210" height="170" rx="20" ry="20" />
+  <text class="text small" x="1322" y="2330">未选择动作</text>
+  <text class="text small" x="1322" y="2366">mode = confirm</text>
+  <text class="text tiny" x="1304" y="2400">action_selection</text>
+
+  <rect class="result" x="1520" y="2270" width="210" height="170" rx="20" ry="20" />
+  <text class="text small" x="1562" y="2330">已选择未确认</text>
+  <text class="text small" x="1562" y="2366">mode = confirm</text>
+  <text class="text tiny" x="1530" y="2400">action_confirmation</text>
+
+  <rect class="result" x="1040" y="2270" width="210" height="170" rx="20" ry="20" />
+  <text class="text small" x="1088" y="2330">已确认动作</text>
+  <text class="text small" x="1088" y="2366">mode = answer</text>
+  <text class="text tiny" x="1068" y="2400">当前只确认，不执行</text>
+
+  <text class="text small" x="90" y="2495">文件参考：[src/services/engine-understanding.ts] [src/services/query-engine.ts] [src/services/contact-resolver.ts] [src/services/query-executor.ts]</text>
+</svg>
