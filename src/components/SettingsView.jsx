@@ -1,11 +1,42 @@
-import React, { useState } from "react";
-import { CONNECTED_APPS, DEFAULT_DOMAIN, DEFAULT_KEYWORDS, DEFAULT_KNOWLEDGE_FILES } from "../data/mockData";
+import React, { useEffect, useState } from "react";
+
+const SETTINGS_KEY = "crm.settings.v1";
+
+const DEFAULT_DOMAIN = "";
+const DEFAULT_KEYWORDS = [];
+const DEFAULT_KNOWLEDGE_FILES = [];
+
+const loadSettings = () => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) {
+      return {
+        domain: DEFAULT_DOMAIN,
+        keywords: DEFAULT_KEYWORDS,
+        knowledgeFiles: DEFAULT_KNOWLEDGE_FILES
+      };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      domain: parsed.domain || DEFAULT_DOMAIN,
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords : DEFAULT_KEYWORDS,
+      knowledgeFiles: Array.isArray(parsed.knowledgeFiles) ? parsed.knowledgeFiles : DEFAULT_KNOWLEDGE_FILES
+    };
+  } catch {
+    return {
+      domain: DEFAULT_DOMAIN,
+      keywords: DEFAULT_KEYWORDS,
+      knowledgeFiles: DEFAULT_KNOWLEDGE_FILES
+    };
+  }
+};
 
 export default function SettingsView({ setView, settingsTab, setSettingsTab, aiPrompt, setAiPrompt }) {
-  const [domain, setDomain] = useState(DEFAULT_DOMAIN);
+  const initial = loadSettings();
+  const [domain, setDomain] = useState(initial.domain);
   const [newUrl, setNewUrl] = useState("");
   
-  const [knowledgeFiles, setKnowledgeFiles] = useState(DEFAULT_KNOWLEDGE_FILES);
+  const [knowledgeFiles, setKnowledgeFiles] = useState(initial.knowledgeFiles);
 
   const addUrl = () => {
     if (newUrl.trim() && !knowledgeFiles.some(f => f.name === newUrl)) {

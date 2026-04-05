@@ -10,7 +10,7 @@ export default function VoiceView({
 
   // Inline contact card state
   const [contactCard, setContactCard] = useState(null); // { name, company, msgIndex }
-  const [updateCard, setUpdateCard] = useState(null); // { clientId, co, role, bd, ps, msgIndex }
+  const [updateCard, setUpdateCard] = useState(null); // { clientId, co, role, tel, bd, ps, msgIndex }
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -40,6 +40,7 @@ export default function VoiceView({
           clientId: last.action.clientId,
           co: last.action.updates?.co || "",
           role: last.action.updates?.role || "",
+          tel: last.action.updates?.tel || "",
           bd: last.action.updates?.bd || "",
           ps: last.action.updates?.ps || "",
           msgIndex: convos.length - 1
@@ -92,7 +93,7 @@ export default function VoiceView({
       const next = [...p];
       next[updateCard.msgIndex] = {
         ...next[updateCard.msgIndex],
-        t: updated ? `✅ 已更新${updated.n}的资料（公司、职位、生日、性格）。` : "未找到该联系人，更新失败。",
+        t: updated ? `✅ 已更新${updated.n}的资料（公司、职位、电话、生日、性格）。` : "未找到该联系人，更新失败。",
         action: null
       };
       return next;

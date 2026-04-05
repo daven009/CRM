@@ -1,19 +1,68 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import "./App.css";
-import { C, EVT, MOCK_HISTORY, MOCK_SCENARIOS } from "./data/mockData";
 import VoiceView from "./components/VoiceView";
 import CardsView from "./components/CardsView";
 import DetailView from "./components/DetailView";
 import LogView from "./components/LogView";
 import SettingsView from "./components/SettingsView";
+import PlaygroundView from "./components/PlaygroundView";
+import { isSupabaseEnabled, loadClientsFromSupabase, upsertClientsToSupabase, deleteClientFromSupabase } from "./lib/supabaseClient";
+import { applyClientAction } from "./lib/clientMutations";
+
+const CLIENTS_KEY = "crm.clients.v1";
+const HISTORY_KEY = "crm.history.v1";
+
+const readJSON = (key, fallback) => {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const EVT = (clients) => {
+  const items = [];
+  clients.forEach(c => {
+    (c.todos || []).filter(t => !t.done).forEach(t => {
+      items.push({ c, tx: t.t, d: t.d, type: t.s === "sys" ? "system" : (t.d < 0 ? "overdue" : "todo") });
+    });
+  });
+  return items.sort((a, b) => a.d - b.d);
+};
+
+const normalizeBirthday = (year, month, day) => {
+  const yy = String(year).padStart(4, "0");
+  const mm = String(month).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  return `${yy}.${mm}.${dd}`;
+};
+
+const detectStandalonePlayground = () => {
+  if (typeof window === "undefined") return false;
+
+  const path = (window.location.pathname || "").toLowerCase();
+  const hash = (window.location.hash || "").toLowerCase();
+  const search = new URLSearchParams(window.location.search || "");
+
+  return (
+    path === "/playground" ||
+    path === "/playground/" ||
+    hash === "#/playground" ||
+    search.get("playground") === "1"
+  );
+};
 
 export default function App() {
+  const [clients, setClients] = useState(() => readJSON(CLIENTS_KEY, []));
   const [view, setView] = useState("voice"); // voice | cards | detail | settings | log
   const [sel, setSel] = useState(null);
   const [recording, setRecording] = useState(false);
-  const [convos, setConvos] = useState([]); // current conversation
-  const [activeTask, setActiveTask] = useState(null); // tracking the currently handled task
-  const [history, setHistory] = useState(MOCK_HISTORY);
+  const [convos, setConvos] = useState([]);
+  const [activeTask, setActiveTask] = useState(null);
+  const [history, setHistory] = useState(() => readJSON(HISTORY_KEY, []));
   const [userText, setUserText] = useState("");
   const [aiTyping, setAiTyping] = useState(false);
   const [cardSort, setCardSort] = useState("priority");
@@ -26,15 +75,66 @@ export default function App() {
   const [detailTyping, setDetailTyping] = useState(false);
   const detailRef = useRef(null);
   const sessionLogIdRef = useRef(null);
-  const [sessionIndex, setSessionIndex] = useState(0); 
-  const [sessionTurn, setSessionTurn] = useState(0);
   const [aiPrompt, setAiPrompt] = useState("你是一个专业且亲和的保险顾问。了解新加坡市场，善于维护关系。语气温暖但专业。根据客户画像和互动记录生成个性化建议。");
-
   const [aiTone, setAiTone] = useState("casual");
-  const [eventsVersion, setEventsVersion] = useState(0);
-  const events = useMemo(() => EVT(C), [eventsVersion]);
+  const [standalonePlayground, setStandalonePlayground] = useState(() => detectStandalonePlayground());
+  const [dbHydrated, setDbHydrated] = useState(false);
+
+  const events = useMemo(() => EVT(clients), [clients]);
 
   const hpColor = (hp) => hp >= 75 ? "#2d6a4f" : hp >= 45 ? "#b45309" : "#c0392b";
+
+  useEffect(() => {
+    localStorage.setItem(CLIENTS_KEY, JSON.stringify(clients));
+  }, [clients]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateFromSupabase = async () => {
+      if (!isSupabaseEnabled()) {
+        setDbHydrated(true);
+        return;
+      }
+
+      try {
+        const remoteClients = await loadClientsFromSupabase();
+        if (!cancelled && remoteClients.length > 0) {
+          setClients(remoteClients);
+        }
+      } catch (err) {
+        console.error("[Supabase] 加载客户数据失败:", err);
+      } finally {
+        if (!cancelled) setDbHydrated(true);
+      }
+    };
+
+    hydrateFromSupabase();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!dbHydrated || !isSupabaseEnabled()) return;
+
+    const timer = setTimeout(() => {
+      upsertClientsToSupabase(clients).catch((err) => {
+        console.error("[Supabase] 同步客户数据失败:", err);
+      });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [clients, dbHydrated]);
+
+  useEffect(() => {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  }, [history]);
+
+  useEffect(() => {
+    if (!sel) return;
+    const fresh = clients.find(c => c.id === sel.id);
+    if (fresh && fresh !== sel) setSel(fresh);
+    if (!fresh) setSel(null);
+  }, [clients, sel]);
 
   useEffect(() => {
     if (view !== "cards") {
@@ -43,36 +143,39 @@ export default function App() {
     }
   }, [view]);
 
-  // Simulate AI response
+  useEffect(() => {
+    const syncMode = () => setStandalonePlayground(detectStandalonePlayground());
+    window.addEventListener("hashchange", syncMode);
+    window.addEventListener("popstate", syncMode);
+    return () => {
+      window.removeEventListener("hashchange", syncMode);
+      window.removeEventListener("popstate", syncMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (standalonePlayground) {
+      setView("playground");
+    }
+  }, [standalonePlayground]);
+
   const sendMsg = (text) => {
     if (!text.trim()) return;
-    
+
     setConvos(p => {
       const nextConvos = [...p, { r: "user", t: text }];
-      // Sync in real-time if handling a task
-      if (activeTask) {
-        const cc = C.find(c => c.id === activeTask.client);
-        const t = cc && cc.todos.find(td => td.t === activeTask.todo);
-        if (t) t.convos = nextConvos;
-      }
       return nextConvos;
     });
-    
+
     setUserText("");
     setAiTyping(true);
+
     setTimeout(() => {
       const lo = text.toLowerCase();
       let reply = "";
       let action = null;
 
-      const normalizeBirthday = (year, month, day) => {
-        const yy = String(year).padStart(4, "0");
-        const mm = String(month).padStart(2, "0");
-        const dd = String(day).padStart(2, "0");
-        return `${yy}.${mm}.${dd}`;
-      };
-
-      const targetClient = C.find(c => lo.includes(c.n.toLowerCase()));
+      const targetClient = clients.find(c => lo.includes((c.n || "").toLowerCase()));
 
       if (targetClient) {
         const isModifyIntent = lo.includes("修改") || lo.includes("更新") || lo.includes("改为") || lo.includes("改成") || lo.includes("update");
@@ -125,23 +228,26 @@ export default function App() {
             reply = `我可以帮你修改${targetClient.n}的公司、职位、电话、生日（YYYY.MM.DD）和性格。你可以说：修改${targetClient.n}的电话为+65 9123 4567。`;
           }
         } else if (lo.includes("处理") || lo.includes("跟进") || lo.includes("拟") || lo.includes("写") || lo.includes("发消息")) {
-          const urgent = targetClient.todos.filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
-          reply = `好的，针对${targetClient.n}的性格标签（${targetClient.ps}），我为你草拟了关于「${urgent ? urgent.t.split('（')[0] : '随访问候'}」的跟进话术：\n\n「Hi ${targetClient.n}，${targetClient.log[0]?.tx ? `上次提到的${targetClient.log[0].tx.split('，')[0]}的事，` : ''}最近有新进展吗？方便时随时联系我。」\n\n你可以复制后发送给他。办理完毕后记得告诉我！`;
+          const urgent = (targetClient.todos || []).filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
+          reply = `好的，针对${targetClient.n}的性格标签（${targetClient.ps || "待补充"}），我为你草拟了关于「${urgent ? urgent.t.split('（')[0] : '随访问候'}」的跟进话术：\n\n「Hi ${targetClient.n}，最近有新进展吗？方便时随时联系我。」\n\n你可以复制后发送给他。办理完毕后记得告诉我！`;
           if (urgent) action = { type: "mark_done", client: targetClient.id, todo: urgent.t };
         } else if (lo.includes("礼物") || lo.includes("送")) {
           const g = targetClient.gifts || [];
           reply = g.length > 0 ? `根据${targetClient.n}的爱好，推荐以下礼物：\n\n${g.map(gi => `· ${gi.n}（${gi.p}）— ${gi.why}`).join("\n")}` : `暂时没有针对${targetClient.n}的礼物建议。`;
         } else {
-          const urgent = targetClient.todos.filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
-          reply = `${targetClient.n}，${targetClient.co} ${targetClient.role}。目前健康度 ${targetClient.hp}。\n\n${urgent ? `⚠️ 近期核心待办：${urgent.t} ${urgent.d < 0 ? `(已过期${Math.abs(urgent.d)}天)` : `(还有${urgent.d}天)`}` : "暂无紧急待办。"}\n\n要我帮你处理吗？`;
+          const urgent = (targetClient.todos || []).filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
+          reply = `${targetClient.n}，${targetClient.co || "未知公司"} ${targetClient.role || ""}。目前健康度 ${targetClient.hp ?? 50}。\n\n${urgent ? `⚠️ 近期核心待办：${urgent.t} ${urgent.d < 0 ? `(已过期${Math.abs(urgent.d)}天)` : `(还有${urgent.d}天)`}` : "暂无紧急待办。"}\n\n要我帮你处理吗？`;
         }
       } else if (lo.includes("跟进") || lo.includes("紧急") || lo.includes("联系谁") || lo.includes("联系")) {
-        const urgents = C.map(c => ({ c, urgent: c.todos.find(t => !t.done && t.d <= 0) })).filter(item => item.urgent).sort((a, b) => a.c.hp - b.c.hp);
-        reply = urgents.length > 0 
-          ? `当前需要紧急跟进的客户有 ${urgents.length} 位：\n\n${urgents.map((u, i) => `${i + 1}. ${u.c.n} — ${u.urgent.t} (健康度 ${u.c.hp})`).join('\n')}\n\n你想先从谁开始？`
-          : "目前没有紧急或者逾期的跟进事项，大家都很健康！";
+        const urgents = clients
+          .map(c => ({ c, urgent: (c.todos || []).find(t => !t.done && t.d <= 0) }))
+          .filter(item => item.urgent)
+          .sort((a, b) => (a.c.hp ?? 50) - (b.c.hp ?? 50));
+        reply = urgents.length > 0
+          ? `当前需要紧急跟进的客户有 ${urgents.length} 位：\n\n${urgents.map((u, i) => `${i + 1}. ${u.c.n} — ${u.urgent.t} (健康度 ${u.c.hp ?? 50})`).join("\n")}\n\n你想先从谁开始？`
+          : "目前没有紧急或者逾期的跟进事项。";
       } else if (lo.includes("礼物") || lo.includes("送什么")) {
-        reply = "你想给谁送礼物？告诉我客户名字和相关场合（比如生日或生子），我会根据他/她的爱好标签进行精准推荐。";
+        reply = "你想给谁送礼物？告诉我客户名字和相关场合，我会根据他/她的标签给出建议。";
       } else if (lo.includes("添加") || lo.includes("新客户") || lo.includes("新联系人") || lo.includes("add contact") || lo.includes("新的客户")) {
         let parsedName = "";
         let parsedCo = "";
@@ -157,29 +263,22 @@ export default function App() {
         reply = "好的，我帮你创建新联系人，请确认以下信息：";
         action = { type: "new_contact", name: parsedName || "新联系人", company: parsedCo || "" };
       } else if (lo.includes("见完") || lo.includes("聊了")) {
-        reply = "好的，我帮你记录到 Timeline 中。聊了什么内容？有哪些新的情报需要我更新到客户画像里？";
+        reply = "好的，我帮你记录。你可以继续补充这次沟通的重点与下一步动作。";
       } else {
-        reply = `你有 ${C.length} 位重点客户。\n当前有 ${events.filter(e => e.d < 0).length} 项已过期待办。\n\n你可以试着说：\n· "今天该联系谁？"\n· "帮我处理王强的跟进"\n· "给李梅准备什么礼物"`;
+        const overdue = events.filter(e => e.d < 0).length;
+        reply = `你当前有 ${clients.length} 位客户。\n当前有 ${overdue} 项已过期待办。\n\n你可以试着说：\n· 今天该联系谁？\n· 帮我处理某某的跟进\n· 添加一个新联系人`;
       }
-      
-      setConvos(p => {
-        const nextConvos = [...p, { r: "ai", t: reply, action }];
-        if (activeTask) {
-          const cc = C.find(c => c.id === activeTask.client);
-          const t = cc && cc.todos.find(td => td.t === activeTask.todo);
-          if (t) t.convos = nextConvos;
-        }
-        return nextConvos;
-      });
+
+      setConvos(p => [...p, { r: "ai", t: reply, action }]);
       setAiTyping(false);
-    }, 1500);
+    }, 500);
   };
 
   const handleTask = (clientId, todoTx) => {
     setActiveTask({ client: clientId, todo: todoTx });
-    const cc = C.find(c => c.id === clientId);
-    const t = cc && cc.todos.find(td => td.t === todoTx);
-    
+    const cc = clients.find(c => c.id === clientId);
+    const t = cc && (cc.todos || []).find(td => td.t === todoTx);
+
     if (t && t.convos && t.convos.length > 0) {
       setConvos([...t.convos]);
     } else {
@@ -189,17 +288,22 @@ export default function App() {
   };
 
   const markDone = (clientId, todoTx) => {
-    const cc = C.find(c => c.id === clientId);
-    if (!cc) return;
-    const t = cc.todos.find(td => td.t === todoTx);
-    if (t) {
-      t.done = true;
-      if (activeTask && activeTask.todo === todoTx) t.convos = [...convos];
+    setClients(prev => prev.map(c => {
+      if (c.id !== clientId) return c;
+      const todos = (c.todos || []).map(td => {
+        if (td.t !== todoTx) return td;
+        return {
+          ...td,
+          done: true,
+          ...(activeTask && activeTask.todo === todoTx ? { convos: [...convos] } : {})
+        };
+      });
       const d = new Date();
-      const today = `${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
-      cc.log.unshift({ dt: today, src: "系统", tx: `标记待办「${todoTx.slice(0, 8)}...」完成`, ai: null });
-    }
-    
+      const today = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+      const log = [{ dt: today, src: "系统", tx: `标记待办「${todoTx.slice(0, 8)}...」完成`, ai: null }, ...(c.log || [])];
+      return { ...c, todos, log };
+    }));
+
     if (activeTask && activeTask.todo === todoTx) {
       setConvos([]);
       setActiveTask(null);
@@ -214,183 +318,212 @@ export default function App() {
         return next;
       });
     }
-
-    setEventsVersion(v => v + 1);
   };
 
   const startNewDetailSession = () => {
     if (detailChat) return;
     setDetailChat(true);
-    setSessionIndex(p => p + 1);
-    setSessionTurn(0);
-    // Create the session ID IMMEDIATELY when the window opens
     sessionLogIdRef.current = Date.now();
   };
 
   const detailSend = () => {
     if (!sel) return;
-    const scenario = MOCK_SCENARIOS[sessionIndex % 5];
-    const name = sel.n.split(' ')[0]; // Use first name
-    const fill = (str) => str.replace(/\{name\}/g, name);
-    const currentTurn = sessionTurn % 3;
+    const userMsgText = detailText.trim() || `记录与${sel.n}的一次沟通`;
+    const userMsg = { r: "user", t: userMsgText };
 
-    const userText = fill(scenario.turns[currentTurn]);
-    const userMsg = { r: "user", t: userText };
-    
     setDetailConvos(p => [...p, userMsg]);
+    setDetailText("");
     setDetailTyping(true);
-    
-    setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
 
     setTimeout(() => {
-      const reply = fill(scenario.responses[currentTurn]);
-      const aiMsg = { r: "ai", t: reply };
-      setDetailConvos(prev => [...prev, aiMsg]);
-      setSessionTurn(prev => prev + 1);
+      const urgent = (sel.todos || []).filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
+      const reply = urgent
+        ? `已记录。本次建议优先推进「${urgent.t}」，并在${urgent.d < 0 ? `今天补救跟进` : `${urgent.d}天内完成`}。`
+        : "已记录。本次沟通暂无紧急待办，我已归档到客户时间线。";
+      setDetailConvos(prev => [...prev, { r: "ai", t: reply }]);
       setDetailTyping(false);
-
-      // Create todo if this turn's response promises one
-      if (scenario.todoCreates && scenario.todoCreates[currentTurn]) {
-        const todoDef = scenario.todoCreates[currentTurn];
-        const newTodo = { t: fill(todoDef.t), d: todoDef.d, s: todoDef.s, done: false };
-        // Avoid duplicates
-        if (!sel.todos.some(td => td.t === newTodo.t)) {
-          sel.todos.push(newTodo);
-          setSel({ ...sel });
-        }
-      }
-    }, 1200);
+    }, 500);
   };
 
   const closeDetailChat = () => {
     if (detailConvos.length > 0 && sel) {
-      const scenario = MOCK_SCENARIOS[sessionIndex % 5];
-      const name = sel.n.split(' ')[0];
-      const fill = (str) => str.replace(/\{name\}/g, name);
-      
       const d = new Date();
-      const todayStr = `${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
-      const timeStr = d.toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit'});
+      const todayStr = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+      const timeStr = d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
       const sid = sessionLogIdRef.current || Date.now();
       const savedConvos = [...detailConvos];
 
-      if (scenario.type === "progress") {
-        // Full timeline entry
-        const logEntry = { sid, d: sid, dt: todayStr, src: "进展", tx: fill(`客户进展同步：${scenario.theme}`), ai: "已归档完整推演记录", history: savedConvos };
-        sel.log.unshift(logEntry);
-        setHistory(hPrev => [{ sid, date: todayStr, time: timeStr, summary: fill(scenario.summary), clients: [sel.n], convos: savedConvos }, ...hPrev]);
-        setSel({ ...sel });
-      } else if (scenario.type === "operational") {
-        // Update client profile traits
-        if (scenario.profileUpdates) {
-          const newTraits = [...sel.traits];
-          scenario.profileUpdates.forEach(tag => {
-            const finalTag = fill(tag);
-            if (!newTraits.includes(finalTag)) newTraits.push(finalTag);
-          });
-          sel.traits = newTraits;
-        }
-        // Brief notation on client log only, no global history
-        const updatedTags = scenario.profileUpdates ? scenario.profileUpdates.map(fill).join("、") : scenario.theme;
-        sel.log.unshift({ d: sid, dt: todayStr, src: "更新", tx: `画像已更新：${updatedTags}`, ai: null });
-        setSel({ ...sel });
-      }
-      // advisory: save nothing
+      setClients(prev => prev.map(c => {
+        if (c.id !== sel.id) return c;
+        const logEntry = {
+          sid,
+          d: sid,
+          dt: todayStr,
+          src: "对话",
+          tx: `与${c.n}完成一次沟通记录`,
+          ai: "已归档沟通转录",
+          history: savedConvos
+        };
+        return { ...c, log: [logEntry, ...(c.log || [])] };
+      }));
+
+      setHistory(hPrev => [{
+        sid,
+        year: d.getFullYear(),
+        date: todayStr,
+        time: timeStr,
+        summary: `与${sel.n}新增${savedConvos.length}条沟通记录`,
+        clients: [sel.n],
+        convos: savedConvos
+      }, ...hPrev]);
     }
 
     setDetailChat(false);
     setDetailConvos([]);
     setDetailText("");
     sessionLogIdRef.current = null;
-    setSessionTurn(0);
   };
 
   const newConvo = () => {
-    if (convos.length > 0) {
-      if (!activeTask) {
-        const clients = [...new Set(convos.filter(c => c.r === "user").flatMap(c => { const t = c.t; return C.filter(ct => t.includes(ct.n)).map(ct => ct.n) }))];
-        const d = new Date();
-        const today = `${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
-        setHistory(p => [{ date: today, time: new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }), summary: `${convos.length}轮对话` + (clients.length > 0 ? `，涉及${clients.join("、")}` : ""), clients, convos: [...convos] }, ...p]);
-      }
+    if (convos.length > 0 && !activeTask) {
+      const clientsInConvo = [...new Set(
+        convos
+          .filter(c => c.r === "user")
+          .flatMap(c => {
+            const t = c.t;
+            return clients.filter(ct => t.includes(ct.n)).map(ct => ct.n);
+          })
+      )];
+      const d = new Date();
+      const today = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+      setHistory(p => [{
+        year: d.getFullYear(),
+        date: today,
+        time: new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" }),
+        summary: `${convos.length}轮对话` + (clientsInConvo.length > 0 ? `，涉及${clientsInConvo.join("、")}` : ""),
+        clients: clientsInConvo,
+        convos: [...convos]
+      }, ...p]);
     }
     setConvos([]);
     setActiveTask(null);
   };
 
+  const persistUpserts = (clientList) => {
+    if (!dbHydrated || !isSupabaseEnabled() || !Array.isArray(clientList) || clientList.length === 0) return;
+    upsertClientsToSupabase(clientList).catch((err) => {
+      console.error("[Supabase] 同步客户数据失败:", err);
+    });
+  };
+
+  const persistDelete = (clientId) => {
+    if (!dbHydrated || !isSupabaseEnabled() || clientId == null) return;
+    deleteClientFromSupabase(clientId).catch((err) => {
+      console.error("[Supabase] 删除客户失败:", err);
+    });
+  };
+
   const addContact = (name, company) => {
-    const newId = Math.max(...C.map(c => c.id)) + 1;
-    const newContact = {
-      id: newId,
-      n: name,
-      co: company || "Unknown",
-      role: "",
-      tel: "",
-      hp: 50,
-      bd: "",
-      ps: "待了解",
-      traits: [],
-      todos: [],
-      log: [{
-        dt: `${String(new Date().getMonth() + 1).padStart(2, '0')}.${String(new Date().getDate()).padStart(2, '0')}`,
-        src: "系统",
-        tx: "联系人已创建",
-        ai: null
-      }],
-      social: [],
-      files: [],
-      from: "手动添加",
-      refs: [],
-      gifts: []
-    };
-    C.push(newContact);
-    return newContact;
+    const action = { type: "create_profile", name, company };
+    const { nextClients, createdClient } = applyClientAction(clients, action);
+    if (!createdClient) return null;
+    setClients(nextClients);
+    persistUpserts([createdClient]);
+    return createdClient;
   };
 
   const updateContact = (clientId, updates) => {
-    const cc = C.find(c => c.id === clientId);
-    if (!cc) return null;
-
-    const changed = [];
-    if (updates.co !== undefined && updates.co !== cc.co) {
-      cc.co = updates.co;
-      changed.push("公司");
-    }
-    if (updates.role !== undefined && updates.role !== cc.role) {
-      cc.role = updates.role;
-      changed.push("职位");
-    }
-    if (updates.bd !== undefined && updates.bd !== cc.bd) {
-      cc.bd = updates.bd;
-      changed.push("生日");
-    }
-    if (updates.ps !== undefined && updates.ps !== cc.ps) {
-      cc.ps = updates.ps;
-      changed.push("性格");
-    }
-    if (updates.tel !== undefined && updates.tel !== cc.tel) {
-      cc.tel = updates.tel;
-      changed.push("电话");
-    }
-
-    if (changed.length > 0) {
-      const d = new Date();
-      const today = `${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
-      cc.log.unshift({ dt: today, src: "系统", tx: `更新了${changed.join("、")}信息`, ai: null });
-    }
-
-    return cc;
+    const action = { type: "update_profile", clientId, updates };
+    const { nextClients, changedClient } = applyClientAction(clients, action);
+    if (!changedClient) return null;
+    setClients(nextClients);
+    persistUpserts([changedClient]);
+    return changedClient;
   };
+
+  const deleteContact = (clientId) => {
+    const action = { type: "delete_profile", clientId };
+    const { nextClients, deletedClientId } = applyClientAction(clients, action);
+    if (deletedClientId == null) return false;
+    setClients(nextClients);
+    persistDelete(deletedClientId);
+    return true;
+  };
+
+  const applyPlaygroundActions = (actions = []) => {
+    if (!Array.isArray(actions) || actions.length === 0) {
+      return { applied: 0, upserted: 0, deleted: 0 };
+    }
+
+    let working = clients;
+    const upsertMap = new Map();
+    const deleteIds = new Set();
+    let applied = 0;
+
+    actions.forEach((action) => {
+      const result = applyClientAction(working, action);
+      working = result.nextClients;
+
+      if (result.mutation) applied += 1;
+      if (result.changedClient) upsertMap.set(result.changedClient.id, result.changedClient);
+      if (result.createdClient) upsertMap.set(result.createdClient.id, result.createdClient);
+      if (result.deletedClientId != null) {
+        deleteIds.add(result.deletedClientId);
+        upsertMap.delete(result.deletedClientId);
+      }
+    });
+
+    setClients(working);
+    persistUpserts([...upsertMap.values()]);
+    deleteIds.forEach((id) => persistDelete(id));
+
+    return {
+      applied,
+      upserted: upsertMap.size,
+      deleted: deleteIds.size
+    };
+  };
+
+  if (standalonePlayground) {
+    return (
+      <div className="app-standalone" style={{ position: "relative" }}>
+        <PlaygroundView
+          setView={setView}
+          clients={clients}
+          applyPlaygroundActions={applyPlaygroundActions}
+          standalone
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="app-wrapper">
       {view === "voice" && (
-        <VoiceView setView={setView} setSettingsTab={setSettingsTab} setRecording={setRecording} recording={recording} userText={userText} setUserText={setUserText} sendMsg={sendMsg} aiTyping={aiTyping} convos={convos} events={events} newConvo={newConvo} markDone={markDone} handleTask={handleTask} activeTask={activeTask} addContact={addContact} updateContact={updateContact} setConvos={setConvos} />
+        <VoiceView
+          setView={setView}
+          setSettingsTab={setSettingsTab}
+          setRecording={setRecording}
+          recording={recording}
+          userText={userText}
+          setUserText={setUserText}
+          sendMsg={sendMsg}
+          aiTyping={aiTyping}
+          convos={convos}
+          events={events}
+          newConvo={newConvo}
+          markDone={markDone}
+          handleTask={handleTask}
+          activeTask={activeTask}
+          addContact={addContact}
+          updateContact={updateContact}
+          setConvos={setConvos}
+        />
       )}
       {view === "cards" && (
         <>
           <CardsView
-            C={C}
+            C={clients}
             cardSort={cardSort}
             setCardSort={setCardSort}
             setSel={setSel}
@@ -408,19 +541,53 @@ export default function App() {
                   setCardsLogOpen(false);
                   setLogDate(null);
                 }}
+                clients={clients}
               />
             </div>
           )}
         </>
       )}
       {view === "detail" && (
-        <DetailView sel={sel} setSel={setSel} setView={setView} hpColor={hpColor} detailChat={detailChat} setDetailChat={setDetailChat} detailConvos={detailConvos} setDetailConvos={setDetailConvos} detailText={detailText} setDetailText={setDetailText} detailTyping={detailTyping} detailSend={detailSend} startNewDetailSession={startNewDetailSession} closeDetailChat={closeDetailChat} recording={recording} setRecording={setRecording} detailRef={detailRef} />
+        <DetailView
+          sel={sel}
+          setSel={setSel}
+          setView={setView}
+          hpColor={hpColor}
+          detailChat={detailChat}
+          setDetailChat={setDetailChat}
+          detailConvos={detailConvos}
+          setDetailConvos={setDetailConvos}
+          detailText={detailText}
+          setDetailText={setDetailText}
+          detailTyping={detailTyping}
+          detailSend={detailSend}
+          startNewDetailSession={startNewDetailSession}
+          closeDetailChat={closeDetailChat}
+          recording={recording}
+          setRecording={setRecording}
+          detailRef={detailRef}
+        />
       )}
       {view === "log" && (
-        <LogView setView={setView} history={history} logDate={logDate} setLogDate={setLogDate} />
+        <LogView setView={setView} history={history} logDate={logDate} setLogDate={setLogDate} clients={clients} />
       )}
       {view === "settings" && (
-        <SettingsView setView={setView} settingsTab={settingsTab} setSettingsTab={setSettingsTab} aiPrompt={aiPrompt} setAiPrompt={setAiPrompt} aiTone={aiTone} setAiTone={setAiTone} />
+        <SettingsView
+          setView={setView}
+          settingsTab={settingsTab}
+          setSettingsTab={setSettingsTab}
+          aiPrompt={aiPrompt}
+          setAiPrompt={setAiPrompt}
+          aiTone={aiTone}
+          setAiTone={setAiTone}
+        />
+      )}
+      {view === "playground" && (
+        <PlaygroundView
+          setView={setView}
+          clients={clients}
+          applyPlaygroundActions={applyPlaygroundActions}
+        />
       )}
     </div>
   );

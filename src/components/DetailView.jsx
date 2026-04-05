@@ -1,5 +1,4 @@
 import React from "react";
-import { BDAY_ALERTS, DETAIL_MOCK_MSGS } from "../data/mockData";
 
 export default function DetailView({
   sel, setSel, setView, hpColor, detailChat, setDetailChat, detailConvos, setDetailConvos,

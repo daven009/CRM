@@ -1,10 +1,12 @@
 import React, { useState } from "react";
-import { C, WEEKDAYS, MONTH_NAMES } from "../data/mockData";
 
-export default function LogView({ setView, history, logDate, setLogDate, onBack }) {
-  // Start at March 2024 to match our '03.xx' mock dates
-  const [currentMonth, setCurrentMonth] = useState(new Date(2024, 2, 1)); 
-  const [selectedDay, setSelectedDay] = useState("03.21");
+const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+export default function LogView({ setView, history, logDate, setLogDate, onBack, clients = [] }) {
+  const now = new Date();
+  const [currentMonth, setCurrentMonth] = useState(new Date(now.getFullYear(), now.getMonth(), 1));
+  const [selectedDay, setSelectedDay] = useState(`${String(now.getMonth() + 1).padStart(2, "0")}.${String(now.getDate()).padStart(2, "0")}`);
 
   const formatMMDD = (month, day) => {
     const mm = String(month + 1).padStart(2, '0');
@@ -37,7 +39,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
     const todayObj = new Date();
     todayObj.setHours(0,0,0,0);
     const allTodos = [];
-    C.forEach(client => {
+    clients.forEach(client => {
       client.todos.forEach(td => {
         const targetDate = new Date(todayObj.getTime() + td.d * 24 * 60 * 60 * 1000);
         const dateStr = `${String(targetDate.getMonth() + 1).padStart(2, '0')}.${String(targetDate.getDate()).padStart(2, '0')}`;
@@ -49,7 +51,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
     for (let i = 0; i < firstDay; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) {
       const dateStr = formatMMDD(month, i);
-      const dayLogs = history.filter(h => h.date === dateStr && (h.year || 2024) === year);
+      const dayLogs = history.filter(h => h.date === dateStr && (h.year || new Date().getFullYear()) === year);
       const dayTodos = allTodos.filter(td => td.dateStr === dateStr);
       days.push({ day: i, dateStr, logs: dayLogs, todos: dayTodos });
     }
@@ -58,7 +60,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
 
   const calendarDays = generateCalendar();
   
-  const anniversaryClients = C.filter(client => client.bd && getBirthdayMMDD(client.bd) === selectedDay);
+  const anniversaryClients = clients.filter(client => client.bd && getBirthdayMMDD(client.bd) === selectedDay);
   const selectedDayData = calendarDays.find(d => d && d.dateStr === selectedDay);
   const dayTodosDisplay = selectedDayData ? selectedDayData.todos.map((td, idx) => ({
     id: `todo-${td.clientName}-${idx}`,
@@ -81,7 +83,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
       convos: []
     })),
     ...dayTodosDisplay,
-    ...history.filter(h => h.date === selectedDay && (h.year || 2024) === currentMonth.getFullYear())
+    ...history.filter(h => h.date === selectedDay && (h.year || new Date().getFullYear()) === currentMonth.getFullYear())
   ];
   const selLog = displayLogs.find(h => (h.id || (h.date + h.time)) === logDate);
 
@@ -116,7 +118,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack 
             const isSelected = selectedDay === d.dateStr;
             const dots = [];
             
-            const hasAnniversary = C.some(client => client.bd && getBirthdayMMDD(client.bd) === d.dateStr);
+            const hasAnniversary = clients.some(client => client.bd && getBirthdayMMDD(client.bd) === d.dateStr);
             if (hasAnniversary) {
               dots.push(<div key="anni" className="log-dot" style={{ background: "#c0392b" }} />);
             }
