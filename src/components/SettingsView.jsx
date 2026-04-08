@@ -31,7 +31,7 @@ const loadSettings = () => {
   }
 };
 
-export default function SettingsView({ setView, settingsTab, setSettingsTab, aiPrompt, setAiPrompt }) {
+export default function SettingsView({ setView, settingsTab, setSettingsTab, aiTone, setAiTone }) {
   const initial = loadSettings();
   const [domain, setDomain] = useState(initial.domain);
   const [newUrl, setNewUrl] = useState("");

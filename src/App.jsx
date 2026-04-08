@@ -6,6 +6,7 @@ import DetailView from "./components/DetailView";
 import LogView from "./components/LogView";
 import SettingsView from "./components/SettingsView";
 import PlaygroundView from "./components/PlaygroundView";
+import PlaygroundView2 from "./components/PlaygroundView2";
 import { isSupabaseEnabled, loadClientsFromSupabase, upsertClientsToSupabase, deleteClientFromSupabase } from "./lib/supabaseClient";
 import { applyClientAction } from "./lib/clientMutations";
 
@@ -47,12 +48,21 @@ const detectStandalonePlayground = () => {
   const hash = (window.location.hash || "").toLowerCase();
   const search = new URLSearchParams(window.location.search || "");
 
-  return (
+  if (
+    path === "/playground2" ||
+    path === "/playground2/" ||
+    hash === "#/playground2" ||
+    search.get("playground2") === "1"
+  ) return "playground2";
+
+  if (
     path === "/playground" ||
     path === "/playground/" ||
     hash === "#/playground" ||
     search.get("playground") === "1"
-  );
+  ) return "playground";
+
+  return false;
 };
 
 export default function App() {
@@ -75,7 +85,6 @@ export default function App() {
   const [detailTyping, setDetailTyping] = useState(false);
   const detailRef = useRef(null);
   const sessionLogIdRef = useRef(null);
-  const [aiPrompt, setAiPrompt] = useState("你是一个专业且亲和的保险顾问。了解新加坡市场，善于维护关系。语气温暖但专业。根据客户画像和互动记录生成个性化建议。");
   const [aiTone, setAiTone] = useState("casual");
   const [standalonePlayground, setStandalonePlayground] = useState(() => detectStandalonePlayground());
   const [dbHydrated, setDbHydrated] = useState(false);
@@ -155,7 +164,7 @@ export default function App() {
 
   useEffect(() => {
     if (standalonePlayground) {
-      setView("playground");
+      setView(standalonePlayground); // "playground" or "playground2"
     }
   }, [standalonePlayground]);
 
@@ -485,9 +494,10 @@ export default function App() {
   };
 
   if (standalonePlayground) {
+    const PgComponent = standalonePlayground === "playground2" ? PlaygroundView2 : PlaygroundView;
     return (
       <div className="app-standalone" style={{ position: "relative" }}>
-        <PlaygroundView
+        <PgComponent
           setView={setView}
           clients={clients}
           applyPlaygroundActions={applyPlaygroundActions}
@@ -576,14 +586,19 @@ export default function App() {
           setView={setView}
           settingsTab={settingsTab}
           setSettingsTab={setSettingsTab}
-          aiPrompt={aiPrompt}
-          setAiPrompt={setAiPrompt}
           aiTone={aiTone}
           setAiTone={setAiTone}
         />
       )}
       {view === "playground" && (
         <PlaygroundView
+          setView={setView}
+          clients={clients}
+          applyPlaygroundActions={applyPlaygroundActions}
+        />
+      )}
+      {view === "playground2" && (
+        <PlaygroundView2
           setView={setView}
           clients={clients}
           applyPlaygroundActions={applyPlaygroundActions}

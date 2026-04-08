@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import { createLLMCaller, getAvailableModels, extractTextFromModelResponse } from "../lib/models/index.js";
 
 /*
  * =========================================================
@@ -10,9 +12,8 @@ import { useEffect, useRef, useState } from "react";
 const ACTION_WHITELIST = [
   "add_trait", "remove_trait",
   "add_todo", "complete_todo", "update_todo", "delete_todo",
-  "update_profile", "add_relation", "create_profile", "delete_profile",
-  "add_notification", "update_health",
-  "trigger_event_chain", "archive_conversation"
+  "update_profile", "add_relation", "create_profile", 
+  "trigger_event_chain"
 ];
 
 const ACTION_SCHEMA = {
@@ -138,55 +139,21 @@ const parseJsonFromText = (raw) => {
   let bestScore = -1;
 
   for (const c of candidates) {
-    try {
-      const parsed = JSON.parse(c);
-      const score = scorePayloadShape(parsed);
-      if (score > bestScore) {
-        best = parsed;
-        bestScore = score;
+    for (const attempt of [c, c.replace(/\r?\n/g, "\\n")]) {
+      try {
+        const parsed = JSON.parse(attempt);
+        const score = scorePayloadShape(parsed);
+        if (score > bestScore) {
+          best = parsed;
+          bestScore = score;
+        }
+      } catch {
+        // noop
       }
-    } catch {
-      // noop
     }
   }
 
   return best;
-};
-
-const extractTextFromModelResponse = (data) => {
-  const msg = data?.choices?.[0]?.message;
-
-  if (typeof msg?.content === "string") return msg.content;
-
-  if (Array.isArray(msg?.content)) {
-    return msg.content
-      .map((part) => (typeof part === "string" ? part : part?.text || part?.content || ""))
-      .join("\n")
-      .trim();
-  }
-
-  const toolArgs = msg?.tool_calls?.[0]?.function?.arguments;
-  if (typeof toolArgs === "string") return toolArgs;
-
-  if (typeof data?.choices?.[0]?.text === "string") return data.choices[0].text;
-  if (typeof data?.output_text === "string") return data.output_text;
-  if (typeof data?.reply === "string") return data.reply;
-
-  return "";
-};
-
-const normalizeApiKey = (raw) => String(raw || "")
-  .trim()
-  .replace(/^Bearer\s+/i, "")
-  .replace(/^['"]|['"]$/g, "");
-
-const buildMinimaxUrl = (baseUrl, groupId) => {
-  const url = new URL(baseUrl);
-  if (groupId) {
-    const gid = String(groupId).trim();
-    if (gid) url.searchParams.set("GroupId", gid);
-  }
-  return url.toString();
 };
 
 const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) => ({
@@ -251,13 +218,13 @@ ${toPrettyJson(ACTION_SCHEMA)}
 - QUERY：查询客户或任务信息。
   示例："张伟最近怎样"、"谁要跟进"。
 - KNOWLEDGE：行业知识问答，不直接改动 CRM 数据。
-  示例："终身寿险怎么运作"、"MAS 新政策"。
+  示例："终身寿险怎么运作"、"MAS 新政策"、"公司新产品是什么"。
 - GENERATE：生成文本/内容草稿。
   示例："帮我写条消息"、"生成贺卡"。
 - RECOMMEND：请求建议或策略。
   示例："送什么好"、"怎么跟进"。
 - RECORD：记录客户事实、偏好、动态。
-  示例："他说太太怀孕了"、"他喜欢跑步"。
+  示例："他喜欢跑步"、"他喜欢威士忌"。
 - COMMAND：明确执行指令，通常需要动作落库。
   示例："标记完成"、"删掉那条待办"、"提醒我下周二"。
 - CHAT：闲聊、寒暄、或意图不明确。
@@ -267,6 +234,29 @@ ${toPrettyJson(ACTION_SCHEMA)}
 - 只要涉及明确数据变更诉求，必须包含 COMMAND 或 RECORD，并给出可执行 actions。
 - 纯知识问答/泛讨论优先 KNOWLEDGE 或 CHAT，actions 应为空。
 - 若信息不足或对象不明确，needs_clarification=true，actions=[]。
+
+# Action 定义
+- add_trait：为客户画像添加标签、特征或偏好。用于记录客户的兴趣爱好、性格特点、生活习惯、消费偏好等可归类为"标签"的信息。
+  示例："他喜欢打高尔夫”、”他是素食主义者”、”客户对风险比较保守"
+- remove_trait：从客户画像中移除已有的标签或特征。用于纠正错误信息或更新过时的偏好。
+  示例："他已经戒烟了，把吸烟那个标签删掉”、”张伟不再是素食者了"
+- add_todo：创建一条新的待办任务。
+  示例："下周二给李总打电话”、”周五前发送保单建议书给陈小姐"
+- complete_todo：将已存在的待办标记为已完成。
+  示例："把给xx那条标记完成”、”我已经跟进过了xx"
+- update_todo：修改已有待办的内容、时间、优先级等字段。
+  示例："把明天那个会议改到周四下午三点”、“明天和他的会面推迟到下周四”
+- delete_todo：删除一条待办任务（不是完成，而是作废）。
+  示例：”取消周五和xx的会面”
+- update_profile：更新客户的基础档案字段（姓名、电话、地址、职业、生日等结构化信息）。
+  示例："张伟换工作了，现在在星展银行”、”更新李太太的电话为 9123 4567"
+- add_relation：在客户之间建立关系链接（家庭、同事、转介绍等）。
+  示例："陈先生是王小姐的先生”、”张伟介绍了李总”
+- create_profile：新建一个客户档案。
+  示例："新增客户：林美玲，38岁，老师”、”帮我建一个新客户叫 Kevin Tan”、”我今天见了一个新客户/新朋友“
+- trigger_event_chain：触发一个预设的事件链或自动化流程，适用于人生大事件（例如"新客户欢迎流程”、）。
+  示例：”xx怀孕了”、”xx换新工作了“、”xx的母亲去世了“、”xx的小孩要升学考试了“
+
 
 # 强规则
 1) action.type 只能从白名单中选，必须小写 snake_case。
@@ -278,7 +268,7 @@ ${toPrettyJson(ACTION_SCHEMA)}
 4) 如果有 add_todo，todo 必须具体可执行，避免空泛措辞。
 5) add_trait.trait 必须是人类可读的关系标签（如“近期见面”“偏好稳健理财”）。
 6) add_trait.trait 禁止机器字段/键名/编码样式（如下划线字段名、日期戳、key=value、ID 串）。
-7) “今天见面/联系日期”这类事实优先写入 add_notification.text 或 update_profile.updates，不要伪装成 trait。
+7) “今天见面/联系日期”这类事实优先写入 add_todo.text 或 update_profile.updates，不要伪装成 trait。
 8) 输出必须可被 JSON.parse 直接解析。`;
 
 const buildPromptContext = (inputText, clients, conversationHistory = []) => {
@@ -341,63 +331,8 @@ const buildPromptContext = (inputText, clients, conversationHistory = []) => {
  * =========================================================
  * SECTION 3 · LLM Gateway (Call + Repair)
  * =========================================================
+ * LLM caller 已抽取至 src/lib/models/，通过 createLLMCaller(providerId) 创建
  */
-
-const createMinimaxCaller = () => {
-  const rawApiKey = import.meta.env.VITE_MINIMAX_API_KEY || "";
-  const apiKey = normalizeApiKey(rawApiKey);
-  const model = (import.meta.env.VITE_MINIMAX_MODEL || "MiniMax-M2.5").trim();
-  const baseUrl = (import.meta.env.VITE_MINIMAX_API_URL || "https://api.minimax.io/v1/text/chatcompletion_v2").trim();
-  const groupId = (import.meta.env.VITE_MINIMAX_GROUP_ID || "").trim();
-  const requestUrl = buildMinimaxUrl(baseUrl, groupId);
-
-  if (!apiKey) {
-    throw new Error("未配置 VITE_MINIMAX_API_KEY，请先在 .env.local 中配置。");
-  }
-
-  let callCount = 0;
-  const callLog = [];
-
-  const call = async (messages, label = "") => {
-    callCount += 1;
-    const callId = callCount;
-
-    const resp = await fetch(requestUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({ model, messages, temperature: 0.2, stream: false })
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`Minimax 请求失败 (${resp.status}): ${text.slice(0, 500)}`);
-    }
-
-    const body = await resp.json();
-    const bizCode = body?.base_resp?.status_code;
-    if (bizCode && bizCode !== 0) {
-      const bizMsg = body?.base_resp?.status_msg || "unknown";
-      if (bizCode === 1004) {
-        throw new Error(`Minimax 鉴权失败（1004）：${bizMsg}`);
-      }
-      throw new Error(`Minimax 业务错误 (${bizCode})：${bizMsg}`);
-    }
-
-    callLog.push({ callId, label, usage: body?.usage || null });
-    return body;
-  };
-
-  return {
-    model,
-    requestUrl,
-    call,
-    callLog,
-    getCallCount: () => callCount
-  };
-};
 
 /*
  * =========================================================
@@ -655,12 +590,12 @@ const buildRoutingDetail = (actions = []) => {
  * =========================================================
  */
 
-const runPipeline = async (inputText, clients, conversationHistory = []) => {
+const runPipeline = async (inputText, clients, conversationHistory = [], modelProvider = 'minimax') => {
   const startedAt = Date.now();
   const stages = [];
 
   const context = buildPromptContext(inputText, clients, conversationHistory);
-  const llm = createMinimaxCaller();
+  const llm = createLLMCaller(modelProvider);
 
   stages.push({
     title: "SECTION 1 · Prompt Assembly",
@@ -932,6 +867,8 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
   const [selectedTurn, setSelectedTurn] = useState(null);
   const [running, setRunning] = useState(false);
   const [showFullPrompt, setShowFullPrompt] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("minimax");
+  const availableModels = getAvailableModels();
 
   const chatEndRef = useRef(null);
 
@@ -962,7 +899,7 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
       }));
 
     try {
-      const result = await runPipeline(text, clients || [], prevHistory);
+      const result = await runPipeline(text, clients || [], prevHistory, selectedModel);
 
       const commitResult = typeof applyPlaygroundActions === "function"
         ? applyPlaygroundActions(result.actions || [])
@@ -1067,7 +1004,9 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
                     <div className="pg-bubble pg-bubble-error">{turn.error}</div>
                   ) : (
                     <div className="pg-bubble pg-bubble-ai">
-                      {turn.reply || "（空回复）"}
+                      <div className="pg-md-content">
+                        <ReactMarkdown>{turn.reply || "（空回复）"}</ReactMarkdown>
+                      </div>
                       <div className="pg-bubble-meta">
                         {turn.intents?.length || 0} 意图 · {turn.actions?.length || 0} 动作 · 点击查看链路
                       </div>
@@ -1091,6 +1030,19 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
               <button onClick={onNewChat} className="pg-new-chat-btn" disabled={running} title="新建对话">
                 + 新建
               </button>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="pg-model-select"
+                disabled={running}
+                title="切换模型"
+              >
+                {availableModels.map(m => (
+                  <option key={m.id} value={m.id} disabled={!m.configured}>
+                    {m.label}{m.configured ? "" : "（未配置）"}
+                  </option>
+                ))}
+              </select>
               <input
                 type="text"
                 value={inputText}
