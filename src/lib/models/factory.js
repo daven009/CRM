@@ -4,6 +4,7 @@
  */
 import { createMinimaxCaller } from './minimax.js';
 import { createClaudeCaller } from './claude.js';
+import { createOpenAICaller } from './openai.js';
 
 /**
  * 支持的模型 Provider 定义
@@ -25,6 +26,13 @@ export const MODEL_PROVIDERS = {
     factory: createClaudeCaller,
     envKey: "VITE_CLAUDE_API_KEY",
     description: "Anthropic Claude，推理能力强"
+  },
+  openai: {
+    id: "openai",
+    label: "OpenAI",
+    factory: createOpenAICaller,
+    envKey: "VITE_OPENAI_API_KEY",
+    description: "OpenAI Chat Completions，适合快速调试"
   }
 };
 

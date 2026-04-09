@@ -7,8 +7,12 @@ import LogView from "./components/LogView";
 import SettingsView from "./components/SettingsView";
 import PlaygroundView from "./components/PlaygroundView";
 import PlaygroundView2 from "./components/PlaygroundView2";
-import { isSupabaseEnabled, loadClientsFromSupabase, upsertClientsToSupabase, deleteClientFromSupabase } from "./lib/supabaseClient";
+import { isSupabaseEnabled, loadClientsFromSupabase, upsertClientsToSupabase, deleteClientFromSupabase, uploadContactFileToStorage } from "./lib/supabaseClient";
 import { applyClientAction } from "./lib/clientMutations";
+import { analyzeScreenshotWithOpenAI } from "./lib/models/openaiVision";
+import { summarizeConversationWithOpenAI } from "./lib/models/openaiSummary";
+import { getAvailableModels } from "./lib/models/index.js";
+import { runCrmPipeline } from "./lib/crmPipeline";
 
 const CLIENTS_KEY = "crm.clients.v1";
 const HISTORY_KEY = "crm.history.v1";
@@ -40,6 +44,64 @@ const normalizeBirthday = (year, month, day) => {
   const dd = String(day).padStart(2, "0");
   return `${yy}.${mm}.${dd}`;
 };
+
+const clipText = (value, max = 28) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+};
+
+const getDefaultModelProvider = () => getAvailableModels().find((m) => m.configured)?.id || "openai";
+
+const toTurnHistory = (messages = []) => {
+  const turns = [];
+  let pendingUser = null;
+
+  (Array.isArray(messages) ? messages : []).forEach((item) => {
+    if (item?.r === "user") {
+      pendingUser = { userText: String(item.t || "").trim() };
+      return;
+    }
+
+    if (item?.r === "ai" && pendingUser?.userText) {
+      turns.push({
+        userText: pendingUser.userText,
+        reply: String(item.t || "").trim(),
+        intents: Array.isArray(item.intents) ? item.intents : [],
+        actions: Array.isArray(item.actions) ? item.actions : []
+      });
+      pendingUser = null;
+    }
+  });
+
+  return turns;
+};
+
+const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result || ""));
+  reader.onerror = () => reject(new Error("文件读取失败"));
+  reader.readAsDataURL(file);
+});
+
+const resizeImageDataUrl = (dataUrl, maxWidth = 1280, quality = 0.82) => new Promise((resolve, reject) => {
+  const img = new Image();
+  img.onload = () => {
+    const scale = Math.min(1, maxWidth / img.width);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      reject(new Error("图片处理失败"));
+      return;
+    }
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    resolve(canvas.toDataURL("image/jpeg", quality));
+  };
+  img.onerror = () => reject(new Error("图片加载失败"));
+  img.src = dataUrl;
+});
 
 const detectStandalonePlayground = () => {
   if (typeof window === "undefined") return false;
@@ -168,119 +230,40 @@ export default function App() {
     }
   }, [standalonePlayground]);
 
-  const sendMsg = (text) => {
-    if (!text.trim()) return;
+  const sendMsg = async (text) => {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) return;
 
-    setConvos(p => {
-      const nextConvos = [...p, { r: "user", t: text }];
-      return nextConvos;
-    });
+    const nextUserMsg = { r: "user", t: trimmed };
+    const prevConvos = [...convos];
+    const historyTurns = toTurnHistory(prevConvos);
 
+    setConvos((p) => [...p, nextUserMsg]);
     setUserText("");
     setAiTyping(true);
 
-    setTimeout(() => {
-      const lo = text.toLowerCase();
-      let reply = "";
-      let action = null;
+    try {
+      const result = await runCrmPipeline(trimmed, clients || [], historyTurns, getDefaultModelProvider());
+      const commitResult = applyPlaygroundActions(result.actions || []);
+      const actionNote = commitResult?.applied > 0 ? `\n\n[已同步 ${commitResult.applied} 条 CRM 动作]` : "";
 
-      const targetClient = clients.find(c => lo.includes((c.n || "").toLowerCase()));
-
-      if (targetClient) {
-        const isModifyIntent = lo.includes("修改") || lo.includes("更新") || lo.includes("改为") || lo.includes("改成") || lo.includes("update");
-        const isNaturalCompanyChange = lo.includes("换公司") || lo.includes("跳槽") || lo.includes("入职") || lo.includes("加入");
-
-        if (isModifyIntent || isNaturalCompanyChange) {
-          const updates = {};
-
-          const bdYmdMatch = text.match(/生日[^，。,\n]*?(\d{4})[年.\/-](\d{1,2})[月.\/-](\d{1,2})/u);
-          const bdMdMatch = text.match(/生日[^，。,\n]*?(\d{1,2})[月.\/-](\d{1,2})/u);
-          if (bdYmdMatch) {
-            updates.bd = normalizeBirthday(bdYmdMatch[1], bdYmdMatch[2], bdYmdMatch[3]);
-          } else if (bdMdMatch) {
-            const prevYear = (targetClient.bd || "").match(/^(\d{4})[.\/-]/)?.[1] || String(new Date().getFullYear());
-            updates.bd = normalizeBirthday(prevYear, bdMdMatch[1], bdMdMatch[2]);
-          }
-
-          const psMatch = text.match(/性格[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([^，。,\n]+)/u);
-          if (psMatch?.[1]) updates.ps = psMatch[1].trim();
-
-          const roleMatch = text.match(/(?:职位|岗位|role|title)[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([^，。,\n]+)/iu);
-          if (roleMatch?.[1]) updates.role = roleMatch[1].trim();
-
-          const companyMatch = text.match(/(?:公司|company)[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([^，。,\n]+)/iu);
-          const naturalCompanyMatch = text.match(/(?:换到|跳槽到|加入|入职|去了|到)\s*([^，。,\n]+)/u);
-          if (companyMatch?.[1]) updates.co = companyMatch[1].trim();
-          else if (naturalCompanyMatch?.[1]) updates.co = naturalCompanyMatch[1].trim();
-
-          const phoneStrictMatch = text.match(/(?:电话|电话号码|手机号|手机|phone|mobile)[^，。,\n]*?(?:是|为|改为|改成|[:：])\s*([+\d][\d\s-]{5,20})/iu);
-          const phoneLooseMatch = text.match(/(?:更新|修改|改)?[^，。,\n]*?(?:电话|电话号码|手机号|手机|phone|mobile)\s*(?:为|成)?\s*([+\d][\d\s-]{5,20})/iu);
-          const parsedPhone = (phoneStrictMatch?.[1] || phoneLooseMatch?.[1] || "").trim();
-          if (parsedPhone) updates.tel = parsedPhone;
-
-          if (Object.keys(updates).length > 0 || isNaturalCompanyChange) {
-            reply = isNaturalCompanyChange && !updates.co
-              ? `收到，你说${targetClient.n}换公司了。请在下面填写新公司并确认。`
-              : `好的，我帮你更新${targetClient.n}的信息，请确认：`;
-            action = {
-              type: "update_contact",
-              clientId: targetClient.id,
-              updates: {
-                co: updates.co ?? targetClient.co,
-                role: updates.role ?? targetClient.role,
-                bd: updates.bd ?? targetClient.bd,
-                ps: updates.ps ?? targetClient.ps,
-                tel: updates.tel ?? targetClient.tel ?? ""
-              }
-            };
-          } else {
-            reply = `我可以帮你修改${targetClient.n}的公司、职位、电话、生日（YYYY.MM.DD）和性格。你可以说：修改${targetClient.n}的电话为+65 9123 4567。`;
-          }
-        } else if (lo.includes("处理") || lo.includes("跟进") || lo.includes("拟") || lo.includes("写") || lo.includes("发消息")) {
-          const urgent = (targetClient.todos || []).filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
-          reply = `好的，针对${targetClient.n}的性格标签（${targetClient.ps || "待补充"}），我为你草拟了关于「${urgent ? urgent.t.split('（')[0] : '随访问候'}」的跟进话术：\n\n「Hi ${targetClient.n}，最近有新进展吗？方便时随时联系我。」\n\n你可以复制后发送给他。办理完毕后记得告诉我！`;
-          if (urgent) action = { type: "mark_done", client: targetClient.id, todo: urgent.t };
-        } else if (lo.includes("礼物") || lo.includes("送")) {
-          const g = targetClient.gifts || [];
-          reply = g.length > 0 ? `根据${targetClient.n}的爱好，推荐以下礼物：\n\n${g.map(gi => `· ${gi.n}（${gi.p}）— ${gi.why}`).join("\n")}` : `暂时没有针对${targetClient.n}的礼物建议。`;
-        } else {
-          const urgent = (targetClient.todos || []).filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
-          reply = `${targetClient.n}，${targetClient.co || "未知公司"} ${targetClient.role || ""}。目前健康度 ${targetClient.hp ?? 50}。\n\n${urgent ? `⚠️ 近期核心待办：${urgent.t} ${urgent.d < 0 ? `(已过期${Math.abs(urgent.d)}天)` : `(还有${urgent.d}天)`}` : "暂无紧急待办。"}\n\n要我帮你处理吗？`;
-        }
-      } else if (lo.includes("跟进") || lo.includes("紧急") || lo.includes("联系谁") || lo.includes("联系")) {
-        const urgents = clients
-          .map(c => ({ c, urgent: (c.todos || []).find(t => !t.done && t.d <= 0) }))
-          .filter(item => item.urgent)
-          .sort((a, b) => (a.c.hp ?? 50) - (b.c.hp ?? 50));
-        reply = urgents.length > 0
-          ? `当前需要紧急跟进的客户有 ${urgents.length} 位：\n\n${urgents.map((u, i) => `${i + 1}. ${u.c.n} — ${u.urgent.t} (健康度 ${u.c.hp ?? 50})`).join("\n")}\n\n你想先从谁开始？`
-          : "目前没有紧急或者逾期的跟进事项。";
-      } else if (lo.includes("礼物") || lo.includes("送什么")) {
-        reply = "你想给谁送礼物？告诉我客户名字和相关场合，我会根据他/她的标签给出建议。";
-      } else if (lo.includes("添加") || lo.includes("新客户") || lo.includes("新联系人") || lo.includes("add contact") || lo.includes("新的客户")) {
-        let parsedName = "";
-        let parsedCo = "";
-        const nameMatch = text.match(/叫([^，,、]+)/u) || text.match(/联系人([^，,、]+)/u);
-        const coMatch = text.match(/([^，,、]+公司)/u) || text.match(/([^，,、]+(?:集团|地产|证券|银行|保险|科技|资本))/u);
-        if (nameMatch) parsedName = nameMatch[1].trim();
-        if (coMatch) parsedCo = coMatch[1].trim();
-        if (!parsedName) {
-          const chars = text.replace(/添加|新客户|新联系人|帮我|一个|叫|的/g, "").trim();
-          const nameGuess = chars.match(/([\u4e00-\u9fa5]{2,4})/u);
-          if (nameGuess) parsedName = nameGuess[1];
-        }
-        reply = "好的，我帮你创建新联系人，请确认以下信息：";
-        action = { type: "new_contact", name: parsedName || "新联系人", company: parsedCo || "" };
-      } else if (lo.includes("见完") || lo.includes("聊了")) {
-        reply = "好的，我帮你记录。你可以继续补充这次沟通的重点与下一步动作。";
-      } else {
-        const overdue = events.filter(e => e.d < 0).length;
-        reply = `你当前有 ${clients.length} 位客户。\n当前有 ${overdue} 项已过期待办。\n\n你可以试着说：\n· 今天该联系谁？\n· 帮我处理某某的跟进\n· 添加一个新联系人`;
-      }
-
-      setConvos(p => [...p, { r: "ai", t: reply, action }]);
+      setConvos((p) => [...p, {
+        r: "ai",
+        t: `${result.reply || "已处理。"}${actionNote}`,
+        intents: result.intents || [],
+        actions: result.actions || [],
+        requestMeta: result.requestMeta || null
+      }]);
+    } catch (err) {
+      setConvos((p) => [...p, {
+        r: "ai",
+        t: err instanceof Error ? `调用失败：${err.message}` : "调用失败，请稍后重试。",
+        intents: [],
+        actions: []
+      }]);
+    } finally {
       setAiTyping(false);
-    }, 500);
+    }
   };
 
   const handleTask = (clientId, todoTx) => {
@@ -335,32 +318,61 @@ export default function App() {
     sessionLogIdRef.current = Date.now();
   };
 
-  const detailSend = () => {
+  const detailSend = async (rawText = detailText) => {
     if (!sel) return;
-    const userMsgText = detailText.trim() || `记录与${sel.n}的一次沟通`;
-    const userMsg = { r: "user", t: userMsgText };
+    const userMsgText = String(rawText || "").trim();
+    if (!userMsgText) return;
 
-    setDetailConvos(p => [...p, userMsg]);
+    const historyTurns = toTurnHistory(detailConvos);
+
+    setDetailConvos((p) => [...p, { r: "user", t: userMsgText }]);
     setDetailText("");
     setDetailTyping(true);
 
-    setTimeout(() => {
-      const urgent = (sel.todos || []).filter(t => !t.done).sort((a, b) => a.d - b.d)[0];
-      const reply = urgent
-        ? `已记录。本次建议优先推进「${urgent.t}」，并在${urgent.d < 0 ? `今天补救跟进` : `${urgent.d}天内完成`}。`
-        : "已记录。本次沟通暂无紧急待办，我已归档到客户时间线。";
-      setDetailConvos(prev => [...prev, { r: "ai", t: reply }]);
+    try {
+      const result = await runCrmPipeline(
+        userMsgText,
+        [sel],
+        historyTurns,
+        getDefaultModelProvider(),
+        { lockedClient: sel }
+      );
+      const commitResult = applyPlaygroundActions(result.actions || []);
+      const latestSel = (result.actions || []).length > 0
+        ? clients.find((client) => client.id === sel.id) || sel
+        : sel;
+      if (latestSel?.id === sel.id) setSel(latestSel);
+
+      const actionNote = commitResult?.applied > 0 ? `\n\n[已同步 ${commitResult.applied} 条 CRM 动作]` : "";
+
+      setDetailConvos((prev) => [...prev, {
+        r: "ai",
+        t: `${result.reply || "已处理。"}${actionNote}`,
+        intents: result.intents || [],
+        actions: result.actions || [],
+        requestMeta: result.requestMeta || null
+      }]);
+    } catch (err) {
+      setDetailConvos((prev) => [...prev, {
+        r: "ai",
+        t: err instanceof Error ? `调用失败：${err.message}` : "调用失败，请稍后重试。"
+      }]);
+    } finally {
       setDetailTyping(false);
-    }, 500);
+    }
   };
 
-  const closeDetailChat = () => {
+  const closeDetailChat = async () => {
     if (detailConvos.length > 0 && sel) {
       const d = new Date();
       const todayStr = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
       const timeStr = d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
       const sid = sessionLogIdRef.current || Date.now();
       const savedConvos = [...detailConvos];
+      const timelineSummary = await summarizeConversationWithOpenAI({
+        history: savedConvos,
+        clientName: sel.n
+      });
 
       setClients(prev => prev.map(c => {
         if (c.id !== sel.id) return c;
@@ -369,7 +381,7 @@ export default function App() {
           d: sid,
           dt: todayStr,
           src: "对话",
-          tx: `与${c.n}完成一次沟通记录`,
+          tx: timelineSummary,
           ai: "已归档沟通转录",
           history: savedConvos
         };
@@ -493,6 +505,79 @@ export default function App() {
     };
   };
 
+  const attachScreenshotToClient = async (clientId, file) => {
+    if (!file) throw new Error("未选择截图文件");
+    const originalDataUrl = await readFileAsDataUrl(file);
+    const resizedDataUrl = await resizeImageDataUrl(originalDataUrl);
+    const storageFile = await uploadContactFileToStorage({ clientId, file });
+    const analysis = await analyzeScreenshotWithOpenAI({
+      dataUrl: resizedDataUrl,
+      filename: file.name || "screenshot.png"
+    });
+
+    let changedClient = null;
+
+    setClients((prev) => prev.map((client) => {
+      if (client.id !== clientId) return client;
+
+      const entry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        kind: "screenshot",
+        name: file.name || "screenshot.png",
+        mimeType: file.type || "image/png",
+        uploadedAt: new Date().toISOString(),
+        summary: analysis.summary,
+        details: analysis.details,
+        tags: analysis.tags,
+        suggestedActions: analysis.suggestedActions,
+        storageBucket: storageFile.bucket,
+        storagePath: storageFile.path,
+        originalUrl: storageFile.publicUrl,
+        previewUrl: storageFile.publicUrl
+      };
+
+      const nextClient = {
+        ...client,
+        files: [entry, ...(Array.isArray(client.files) ? client.files : [])],
+        log: [
+          {
+            dt: `${String(new Date().getMonth() + 1).padStart(2, "0")}.${String(new Date().getDate()).padStart(2, "0")}`,
+            src: "截图",
+            tx: clipText(analysis.summary, 20) || "上传了一张资料截图",
+            ai: clipText(analysis.details?.[0] || "已解析截图内容并沉淀到资料库", 30)
+          },
+          ...(client.log || [])
+        ]
+      };
+
+      changedClient = nextClient;
+      return nextClient;
+    }));
+
+    if (changedClient) {
+      if (sel?.id === changedClient.id) {
+        setSel(changedClient);
+      }
+      persistUpserts([changedClient]);
+    }
+
+    return analysis;
+  };
+
+  const saveDetailClient = (updatedClient) => {
+    if (!updatedClient?.id) return;
+
+    setClients((prev) => prev.map((client) => (
+      client.id === updatedClient.id ? updatedClient : client
+    )));
+
+    if (sel?.id === updatedClient.id) {
+      setSel(updatedClient);
+    }
+
+    persistUpserts([updatedClient]);
+  };
+
   if (standalonePlayground) {
     const PgComponent = standalonePlayground === "playground2" ? PlaygroundView2 : PlaygroundView;
     return (
@@ -576,6 +661,8 @@ export default function App() {
           recording={recording}
           setRecording={setRecording}
           detailRef={detailRef}
+          attachScreenshotToClient={attachScreenshotToClient}
+          saveDetailClient={saveDetailClient}
         />
       )}
       {view === "log" && (
