@@ -35,12 +35,57 @@ const LIMITS = {
 };
 
 const SETTINGS_KEY = "crm.settings.v1";
+const DEFAULT_MATERIAL_LIMIT = 5;
+const MATERIAL_EXCERPT_LIMIT = 24000;
 
 const clipText = (value, max = 220) => {
   const text = String(value || "").trim();
   if (!text) return "";
   return text.length > max ? `${text.slice(0, max)}…` : text;
 };
+
+const normalizeMaterialEntry = (value) => {
+  if (typeof value === "string") {
+    return {
+      name: value,
+      kind: "file",
+      summary: value,
+      details: [],
+      tags: [],
+      promptContext: value,
+      extractedText: ""
+    };
+  }
+
+  return {
+    id: value?.id || "",
+    name: value?.name || "Untitled",
+    kind: value?.kind || "file",
+    summary: String(value?.summary || "").trim(),
+    details: Array.isArray(value?.details) ? value.details.map((item) => String(item || "").trim()).filter(Boolean) : [],
+    tags: Array.isArray(value?.tags) ? value.tags.map((item) => String(item || "").trim()).filter(Boolean) : [],
+    promptContext: String(value?.promptContext || "").trim(),
+    extractedText: clipText(value?.extractedText || "", MATERIAL_EXCERPT_LIMIT),
+    parsedPreview: value?.parsedPreview || null,
+    uploadedAt: value?.uploadedAt || ""
+  };
+};
+
+const buildMaterialContext = (files = [], maxItems = DEFAULT_MATERIAL_LIMIT) => (Array.isArray(files) ? files : [])
+  .slice(0, maxItems)
+  .map(normalizeMaterialEntry)
+  .map((file, index) => ({
+    index: index + 1,
+    name: file.name,
+    kind: file.kind,
+    uploadedAt: file.uploadedAt,
+    summary: file.summary,
+    details: file.details.slice(0, 6),
+    tags: file.tags.slice(0, 6),
+    promptContext: file.promptContext || file.summary,
+    extractedTextExcerpt: file.extractedText,
+    parsedPreview: file.parsedPreview
+  }));
 
 const isPlainObject = (v) => Object.prototype.toString.call(v) === "[object Object]";
 
@@ -160,16 +205,10 @@ const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) 
   role: c.role,
   hp: c.hp,
   todoOpenCount: (c.todos || []).filter((t) => !t.done).length,
-  materials: (Array.isArray(c.files) ? c.files : [])
-    .slice(0, 3)
-    .map((item) => {
-      if (typeof item === "string") return item;
-      return item?.summary || item?.name || "";
-    })
-    .filter(Boolean)
+  materials: buildMaterialContext(c.files, 3).map((item) => item.promptContext || item.summary || item.name).filter(Boolean)
 }));
 
-const buildSystemPrompt = ({ currentDate, currentYear, domain, keywords, lockedClient }) => `你是 RelateAI（Customer Relationship Management 语义理解及行为路由编排器）。
+const buildSystemPrompt = ({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit }) => `你是 RelateAI（Customer Relationship Management 语义理解及行为路由编排器）。
 
 # 用户Profile
 - 用户的角色是：保险中介
@@ -182,6 +221,16 @@ const buildSystemPrompt = ({ currentDate, currentYear, domain, keywords, lockedC
 ${lockedClient
     ? `- 当前联系人已锁定：${lockedClient.n}（${lockedClient.co || "公司待补充"}，id:${lockedClient.id}）。\n- 若用户没有明确提到其他联系人，则默认所有 intents、actions、reply 都围绕该联系人展开。\n- 不要再向用户追问“你指的是谁”，除非用户显式切换到其他联系人。`
     : "- 当前没有锁定联系人。若用户提及联系人不明确，必须触发澄清。"}
+- 若当前联系人存在资料文件（Data），你必须将这些资料视为强上下文，在分析需求、生成建议、起草话术、判断下一步动作时优先引用，不要忽略其中的数字、时间、金额、承诺、方案细节。
+- 若资料中同时存在 summary / promptContext / extractedTextExcerpt / parsedPreview，信息优先级应为：extractedTextExcerpt 和 parsedPreview > promptContext > details > summary。
+- 若摘要内容与原始抽取内容（extractedTextExcerpt / parsedPreview）不一致，必须以原始抽取内容为准，不要被旧摘要误导。
+- 为控制篇幅，某些上下文集合可能只会提供一个子集，并通过对应的 *_meta 字段告诉你：总量 totalCount、当前注入数量 includedCount、是否截断 truncated、默认上限 defaultLimit。
+- 通用规则：当任意上下文集合的 meta.truncated = true 时，你必须始终区分“全集总量”和“当前注入子集”，绝对不能把当前注入数量误说成全集总量。
+- 如果用户询问数量、要求枚举、要求汇总、要求“全部展示/完整内容/所有项目”，而相关上下文集合存在 meta.truncated = true：
+  1) 先回答全集总量 totalCount；
+  2) 再明确说明当前回答基于一个被截断的子集，当前只注入了前 includedCount 项；
+  3) 如用户继续要求完整展开，再基于全集继续响应；
+  4) 若你无法访问全集，只能诚实说明当前仅基于已注入子集回答。
 
 # 时间基准
 - 当前日期（系统注入）: ${currentDate}
@@ -268,7 +317,9 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
   const currentYear = now.getFullYear();
   const { domain, keywords } = loadUserIntelligence();
   const lockedClient = options?.lockedClient || null;
-  const systemPrompt = buildSystemPrompt({ currentDate, currentYear, domain, keywords, lockedClient });
+  const materialLimit = Number.isFinite(Number(options?.materialLimit)) ? Number(options.materialLimit) : DEFAULT_MATERIAL_LIMIT;
+  const systemPrompt = buildSystemPrompt({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit });
+  const lockedClientMaterials = lockedClient ? buildMaterialContext(lockedClient.files, materialLimit) : [];
 
   const normalizedHistory = (conversationHistory || [])
     .filter((turn) => turn?.userText)
@@ -308,7 +359,25 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
         name: lockedClient.n,
         company: lockedClient.co,
         role: lockedClient.role,
-        hp: lockedClient.hp
+        hp: lockedClient.hp,
+        materials: lockedClientMaterials,
+        materials_total_count: Array.isArray(lockedClient.files) ? lockedClient.files.length : 0,
+        materials_truncated: Array.isArray(lockedClient.files) ? lockedClient.files.length > materialLimit : false
+      }
+      : null,
+    client_materials: lockedClient
+      ? lockedClientMaterials
+      : [],
+    client_materials_meta: lockedClient
+      ? {
+        totalCount: Array.isArray(lockedClient.files) ? lockedClient.files.length : 0,
+        includedCount: lockedClientMaterials.length,
+        truncated: Array.isArray(lockedClient.files) ? lockedClient.files.length > materialLimit : false,
+        defaultLimit: materialLimit,
+        collectionLabel: "client_materials",
+        note: Array.isArray(lockedClient.files) && lockedClient.files.length > materialLimit
+          ? `该集合已被截断。回答时必须区分全集(totalCount=${lockedClient.files.length})和当前注入子集(includedCount=${materialLimit})，不能混淆。`
+          : "当前已注入全部资料。"
       }
       : null,
     time_anchor: {
@@ -316,7 +385,7 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
       currentYear
     },
     note: lockedClient
-      ? "当前联系人已锁定。请默认围绕 current_focus_client 处理，除非用户明确切换到其他联系人。"
+      ? "当前联系人已锁定。请默认围绕 current_focus_client 处理，除非用户明确切换到其他联系人。client_materials 内是该联系人的资料上下文，每轮对话都必须优先参考。若 client_materials_meta.truncated=true，你必须知道当前只看到了前几份资料。"
       : "请严格按照 system prompt 的 JSON 协议输出，并严格使用 time_anchor 解释‘今年/现在’。"
   };
 

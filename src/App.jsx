@@ -7,12 +7,14 @@ import LogView from "./components/LogView";
 import SettingsView from "./components/SettingsView";
 import PlaygroundView from "./components/PlaygroundView";
 import PlaygroundView2 from "./components/PlaygroundView2";
-import { isSupabaseEnabled, loadClientsFromSupabase, upsertClientsToSupabase, deleteClientFromSupabase, uploadContactFileToStorage } from "./lib/supabaseClient";
+import { isSupabaseEnabled, loadClientsFromSupabase, upsertClientsToSupabase, deleteClientFromSupabase, uploadContactFileToStorage, deleteContactFileFromStorage } from "./lib/supabaseClient";
 import { applyClientAction } from "./lib/clientMutations";
 import { analyzeScreenshotWithOpenAI } from "./lib/models/openaiVision";
 import { summarizeConversationWithOpenAI } from "./lib/models/openaiSummary";
+import { analyzeMaterialWithOpenAI } from "./lib/models/openaiMaterial";
 import { getAvailableModels } from "./lib/models/index.js";
 import { runCrmPipeline } from "./lib/crmPipeline";
+import { parseMaterialFile } from "./lib/materialParsers";
 
 const CLIENTS_KEY = "crm.clients.v1";
 const HISTORY_KEY = "crm.history.v1";
@@ -530,6 +532,7 @@ export default function App() {
         details: analysis.details,
         tags: analysis.tags,
         suggestedActions: analysis.suggestedActions,
+        promptContext: [analysis.summary, ...(analysis.details || [])].filter(Boolean).join("；"),
         storageBucket: storageFile.bucket,
         storagePath: storageFile.path,
         originalUrl: storageFile.publicUrl,
@@ -564,6 +567,75 @@ export default function App() {
     return analysis;
   };
 
+  const attachDataFileToClient = async (clientId, file) => {
+    if (!file) throw new Error("未选择资料文件");
+
+    if (String(file.type || "").startsWith("image/")) {
+      return attachScreenshotToClient(clientId, file);
+    }
+
+    const parsedFile = await parseMaterialFile(file);
+    const storageFile = await uploadContactFileToStorage({ clientId, file });
+    const analysis = await analyzeMaterialWithOpenAI({
+      filename: file.name || "document",
+      kind: parsedFile.kind,
+      extractedText: parsedFile.extractedText,
+      parsedPreview: parsedFile.parsedPreview
+    });
+
+    let changedClient = null;
+
+    setClients((prev) => prev.map((client) => {
+      if (client.id !== clientId) return client;
+
+      const entry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        kind: parsedFile.kind,
+        name: file.name || "document",
+        mimeType: file.type || "application/octet-stream",
+        uploadedAt: new Date().toISOString(),
+        size: Number(file.size || 0),
+        summary: analysis.summary,
+        details: analysis.details,
+        tags: analysis.tags,
+        suggestedActions: analysis.suggestedActions,
+        promptContext: analysis.promptContext,
+        parsedPreview: parsedFile.parsedPreview,
+        extractedText: parsedFile.extractedText,
+        storageBucket: storageFile.bucket,
+        storagePath: storageFile.path,
+        originalUrl: storageFile.publicUrl,
+        previewUrl: storageFile.publicUrl
+      };
+
+      const nextClient = {
+        ...client,
+        files: [entry, ...(Array.isArray(client.files) ? client.files : [])],
+        log: [
+          {
+            dt: `${String(new Date().getMonth() + 1).padStart(2, "0")}.${String(new Date().getDate()).padStart(2, "0")}`,
+            src: parsedFile.kind === "spreadsheet" ? "表格" : "文档",
+            tx: clipText(analysis.summary, 20) || "上传了一份联系人资料",
+            ai: clipText(analysis.details?.[0] || analysis.promptContext || "已解析资料内容并沉淀到资料库", 30)
+          },
+          ...(client.log || [])
+        ]
+      };
+
+      changedClient = nextClient;
+      return nextClient;
+    }));
+
+    if (changedClient) {
+      if (sel?.id === changedClient.id) {
+        setSel(changedClient);
+      }
+      persistUpserts([changedClient]);
+    }
+
+    return analysis;
+  };
+
   const saveDetailClient = (updatedClient) => {
     if (!updatedClient?.id) return;
 
@@ -576,6 +648,37 @@ export default function App() {
     }
 
     persistUpserts([updatedClient]);
+  };
+
+  const removeDataFileFromClient = async (clientId, fileIndex) => {
+    const targetClient = (clients || []).find((client) => client.id === clientId);
+    if (!targetClient) throw new Error("未找到对应联系人。");
+
+    const files = Array.isArray(targetClient.files) ? targetClient.files : [];
+    const targetFile = files[fileIndex];
+    if (targetFile == null) return;
+
+    if (typeof targetFile !== "string" && targetFile.storagePath) {
+      await deleteContactFileFromStorage({
+        bucket: targetFile.storageBucket,
+        path: targetFile.storagePath
+      });
+    }
+
+    const nextClient = {
+      ...targetClient,
+      files: files.filter((_, idx) => idx !== fileIndex)
+    };
+
+    setClients((prev) => prev.map((client) => (
+      client.id === clientId ? nextClient : client
+    )));
+
+    if (sel?.id === clientId) {
+      setSel(nextClient);
+    }
+
+    persistUpserts([nextClient]);
   };
 
   if (standalonePlayground) {
@@ -661,8 +764,9 @@ export default function App() {
           recording={recording}
           setRecording={setRecording}
           detailRef={detailRef}
-          attachScreenshotToClient={attachScreenshotToClient}
+          attachScreenshotToClient={attachDataFileToClient}
           saveDetailClient={saveDetailClient}
+          removeDataFileFromClient={removeDataFileFromClient}
         />
       )}
       {view === "log" && (

@@ -172,3 +172,14 @@ export const uploadContactFileToStorage = async ({ clientId, file }) => {
     publicUrl: data?.publicUrl || ""
   };
 };
+
+export const deleteContactFileFromStorage = async ({ bucket = CONTACT_FILES_BUCKET, path }) => {
+  const supabase = getSupabaseClient();
+  if (!supabase || !path) return;
+
+  const { error } = await supabase.storage
+    .from(bucket || CONTACT_FILES_BUCKET)
+    .remove([path]);
+
+  if (error) throw error;
+};

@@ -20,7 +20,7 @@ const summarizeHistory = (history = []) => {
 export default function DetailView({
   sel, setSel, setView, hpColor, detailChat, setDetailChat, detailConvos, setDetailConvos,
   detailText, setDetailText, detailTyping, detailSend, startNewDetailSession, closeDetailChat, recording, setRecording, detailRef,
-  attachScreenshotToClient, saveDetailClient
+  attachScreenshotToClient, saveDetailClient, removeDataFileFromClient
 }) {
   const msgIdx = React.useRef(0);
   const [activeTab, setActiveTab] = React.useState("overview");
@@ -35,8 +35,12 @@ export default function DetailView({
   const [swipedLogIndex, setSwipedLogIndex] = React.useState(null);
   const [editingLogIndex, setEditingLogIndex] = React.useState(null);
   const [editingLogSummary, setEditingLogSummary] = React.useState("");
+  const [editingFileIndex, setEditingFileIndex] = React.useState(null);
+  const [editingFileSummary, setEditingFileSummary] = React.useState("");
+  const [deletingFileIndex, setDeletingFileIndex] = React.useState(null);
   const screenshotInputRef = React.useRef(null);
   const logPressTimerRef = React.useRef(null);
+  const filePressTimerRef = React.useRef(null);
 
   React.useEffect(() => {
     if (detailChat && detailRef.current) {
@@ -96,15 +100,17 @@ export default function DetailView({
       return { name: value, summary: "", previewUrl: "", tags: [], details: [] };
     }
     return {
+      kind: value?.kind || "file",
       name: value?.name || "Untitled",
       summary: value?.summary || "",
       originalUrl: value?.originalUrl || value?.previewUrl || "",
       previewUrl: value?.previewUrl || "",
       tags: Array.isArray(value?.tags) ? value.tags : [],
-      details: Array.isArray(value?.details) ? value.details : []
+      details: Array.isArray(value?.details) ? value.details : [],
+      parsedPreview: value?.parsedPreview || null,
+      mimeType: value?.mimeType || ""
     };
   };
-  const removeFile = (idx) => { sel.files = sel.files.filter((_, i) => i !== idx); setSel({ ...sel }); };
   if (!sel) return null;
 
   const commitClientUpdate = (nextClient) => {
@@ -147,6 +153,50 @@ export default function DetailView({
     commitClientUpdate({ ...sel, log: nextLog });
     setEditingLogIndex(null);
     setEditingLogSummary("");
+  };
+
+  const startFileLongPress = (idx, summary) => {
+    clearTimeout(filePressTimerRef.current);
+    filePressTimerRef.current = setTimeout(() => {
+      setEditingFileIndex(idx);
+      setEditingFileSummary(summary || "");
+    }, 550);
+  };
+
+  const clearFileLongPress = () => clearTimeout(filePressTimerRef.current);
+
+  const saveFileSummary = () => {
+    if (editingFileIndex == null) return;
+
+    const nextSummary = editingFileSummary.trim();
+    const nextFiles = (sel.files || []).map((item, idx) => {
+      if (idx !== editingFileIndex) return item;
+      if (typeof item === "string") return nextSummary || item;
+      return {
+        ...item,
+        summary: nextSummary || item.summary
+      };
+    });
+
+    commitClientUpdate({ ...sel, files: nextFiles });
+    setEditingFileIndex(null);
+    setEditingFileSummary("");
+  };
+
+  const removeFile = async (idx) => {
+    if (typeof removeDataFileFromClient !== "function") return;
+    setDeletingFileIndex(idx);
+    try {
+      await removeDataFileFromClient(sel.id, idx);
+      if (viewingFile && normalizeFileEntry(sel.files?.[idx]).originalUrl === viewingFile.originalUrl) {
+        setViewingFile(null);
+      }
+    } catch (err) {
+      console.error("[Data] 删除资料失败:", err);
+      alert(err instanceof Error ? err.message : "删除资料失败");
+    } finally {
+      setDeletingFileIndex(null);
+    }
   };
 
   const handlePickScreenshot = async (event) => {
@@ -363,7 +413,19 @@ export default function DetailView({
                       <button
                         type="button"
                         className="file-open-btn"
-                        onClick={() => f.originalUrl && setViewingFile(f)}
+                        onMouseDown={() => startFileLongPress(i, f.summary)}
+                        onMouseUp={clearFileLongPress}
+                        onMouseLeave={clearFileLongPress}
+                        onTouchStart={() => startFileLongPress(i, f.summary)}
+                        onTouchEnd={clearFileLongPress}
+                        onClick={() => {
+                          if (!f.originalUrl) return;
+                          if (String(f.mimeType || "").startsWith("image/") || f.kind === "screenshot") {
+                            setViewingFile(f);
+                            return;
+                          }
+                          window.open(f.originalUrl, "_blank", "noopener,noreferrer");
+                        }}
                         disabled={!f.originalUrl}
                       >
                       <div className="file-row-left">
@@ -371,14 +433,17 @@ export default function DetailView({
                         <div className="file-row-meta">
                           <span className="file-row-name">{f.name}</span>
                           {f.summary && <span className="file-row-summary">{f.summary}</span>}
+                          {f.details?.[0] && <span className="file-row-summary">{f.details[0]}</span>}
                         </div>
                       </div>
                       </button>
-                      <button onClick={() => removeFile(i)} className="file-remove-btn">✕</button>
+                      <button onClick={() => removeFile(i)} className="file-remove-btn" disabled={deletingFileIndex === i}>
+                        {deletingFileIndex === i ? "…" : "✕"}
+                      </button>
                     </div>
                     );
                   })}
-                  {uploadingScreenshot && <div className="no-files-text">Analyzing screenshot...</div>}
+                  {uploadingScreenshot && <div className="no-files-text">Analyzing uploaded file...</div>}
                   {sel.files.length === 0 && <div className="no-files-text">No documents yet.</div>}
                 </div>
 
@@ -394,7 +459,7 @@ export default function DetailView({
         <input
           ref={screenshotInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.csv,.xlsx,.xls,.doc,.docx"
           onChange={handlePickScreenshot}
           style={{ display: "none" }}
         />
@@ -552,6 +617,27 @@ export default function DetailView({
                 autoFocus
                 value={editingLogSummary}
                 onChange={(e) => setEditingLogSummary(e.target.value)}
+                className="account-input edit-task-input"
+              />
+            </div>
+            <div className="edit-modal-hint">
+              Click outside to save
+            </div>
+          </div>
+        </>
+      )}
+
+      {editingFileIndex != null && (
+        <>
+          <div onClick={saveFileSummary} className="edit-overlay" />
+          <div className="edit-modal">
+            <div className="edit-modal-title">Edit Data Summary</div>
+            <div className="edit-field">
+              <div className="edit-field-label">SUMMARY</div>
+              <input
+                autoFocus
+                value={editingFileSummary}
+                onChange={(e) => setEditingFileSummary(e.target.value)}
                 className="account-input edit-task-input"
               />
             </div>
