@@ -81,7 +81,7 @@ export default function DetailView({
     if (editingTodo) {
       editingTodo.t = editVal.t;
       editingTodo.d = parseInt(editVal.d) || 0;
-      setSel({ ...sel });
+      commitClientUpdate({ ...sel });
       setEditingTodo(null);
     }
   };
@@ -231,40 +231,52 @@ export default function DetailView({
             {/* Slide 1: Tasks */}
             <div className="tab-slide">
               <div className="tab-slide-pad">
-                {sel.todos.filter(t => !t.done).length > 0 && <div className="detail-todos-section">
-                  {sel.todos.filter(t => !t.done).sort((a, b) => a.d - b.d).map((td, i) => (
-                    <div 
-                      key={i} 
-                      className="todo-item todo-item-detail"
-                      onMouseDown={() => startPress(td)}
-                      onMouseUp={endPress}
-                      onTouchStart={() => startPress(td)}
-                      onTouchEnd={endPress}
-                    >
-                      <div 
-                        className="todo-circle" 
-                        onClick={(e) => { e.stopPropagation(); td.done = true; setSel({ ...sel }); }}
-                        style={{ border: `1.5px solid ${td.d < 0 ? "#c0392b" : "rgba(0,0,0,0.12)"}`, cursor: "pointer" }} 
-                      />
-                      <div className="todo-text-wrap"><div className="todo-text">{td.t}</div></div>
-                      <span className="todo-days" style={{ color: td.d < 0 ? "#c0392b" : "#bbb" }}>{td.d < 0 ? `-${Math.abs(td.d)}d` : `${td.d}d`}</span>
-                    </div>
-                  ))}
-                  {sel.todos.filter(t => t.done).length > 0 && (
-                    <div className="done-list">
-                      {sel.todos.filter(t => t.done).map((td, i) => (
-                        <div key={i} className="done-item done-item-flex">
+                {(() => {
+                  const pending = sel.todos.filter(t => !t.done).sort((a, b) => a.d - b.d);
+                  const done = sel.todos.filter(t => t.done);
+                  // 总共最多显示 10 条：优先显示未完成，剩余名额给已完成
+                  const maxTotal = 10;
+                  const shownPending = pending.slice(0, maxTotal);
+                  const shownDone = done.slice(0, Math.max(0, maxTotal - shownPending.length));
+                  if (shownPending.length === 0 && shownDone.length === 0) {
+                    return <div className="no-tasks-text">No active tasks.</div>;
+                  }
+                  return (
+                    <div className="detail-todos-section">
+                      {shownPending.map((td, i) => (
+                        <div 
+                          key={`p-${i}`} 
+                          className="todo-item todo-item-detail"
+                          onMouseDown={() => startPress(td)}
+                          onMouseUp={endPress}
+                          onTouchStart={() => startPress(td)}
+                          onTouchEnd={endPress}
+                        >
                           <div 
-                            className="todo-circle todo-circle-done" 
-                            onClick={() => { td.done = false; setSel({ ...sel }); }}
-                          >✓</div>
-                          <div className="done-item-text">{td.t}</div>
+                            className="todo-circle" 
+                            onClick={(e) => { e.stopPropagation(); td.done = true; commitClientUpdate({ ...sel }); }}
+                            style={{ border: `1.5px solid ${td.d < 0 ? "#c0392b" : "rgba(0,0,0,0.12)"}`, cursor: "pointer" }} 
+                          />
+                          <div className="todo-text-wrap"><div className="todo-text">{td.t}</div></div>
+                          <span className="todo-days" style={{ color: td.d < 0 ? "#c0392b" : "#bbb" }}>{td.d < 0 ? `-${Math.abs(td.d)}d` : `${td.d}d`}</span>
                         </div>
                       ))}
+                      {shownDone.length > 0 && (
+                        <div className="done-list">
+                          {shownDone.map((td, i) => (
+                            <div key={`d-${i}`} className="done-item done-item-flex">
+                              <div 
+                                className="todo-circle todo-circle-done" 
+                                onClick={() => { td.done = false; commitClientUpdate({ ...sel }); }}
+                              >✓</div>
+                              <div className="done-item-text">{td.t}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>}
-                {sel.todos.filter(t => !t.done).length === 0 && <div className="no-tasks-text">No active tasks.</div>}
+                  );
+                })()}
               </div>
             </div>
 
@@ -394,7 +406,7 @@ export default function DetailView({
           className="talk-btn talk-btn-idle"
         >
           <div className="talk-dot" />
-          {`talk to ${sel.n.split(' ')[0]}`}
+          {`talk about ${sel.n.split(' ')[0]}`}
         </button>
       </div>
 
@@ -471,6 +483,17 @@ export default function DetailView({
               />
             </div>
             
+            <button
+              className="edit-delete-btn"
+              onClick={() => {
+                sel.todos = sel.todos.filter(t => t !== editingTodo);
+                commitClientUpdate({ ...sel });
+                setEditingTodo(null);
+              }}
+            >
+              Delete Task
+            </button>
+
             <div className="edit-modal-hint">
               Click outside to save
             </div>
