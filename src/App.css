@@ -103,7 +103,15 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .done-item { font-size: 12px; color: #ddd; text-decoration: line-through; padding: 3px 0 3px 26px; cursor: pointer; }
 .detail-timeline { margin-bottom: 24px; animation: fadeUp 0.4s ease 0.2s both; }
 .section-label { font-size: 9px; font-family: 'IBM Plex Mono', monospace; color: #ccc; letter-spacing: 0.5px; margin-bottom: 8px; text-transform: uppercase; }
+.timeline-swipe-wrap { position: relative; overflow: hidden; }
+.timeline-swipe-actions { position: absolute; inset: 0 0 0 auto; width: 92px; display: flex; align-items: stretch; justify-content: flex-end; }
+.timeline-delete-btn { width: 92px; border: none; background: #c0392b; color: #fff; font-size: 12px; font-family: 'IBM Plex Mono', monospace; cursor: pointer; }
 .timeline-item { padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.04); }
+.timeline-swipe-wrap .timeline-item { position: relative; background: #faf9f7; transform: translateX(0); transition: transform 0.2s ease; padding-left: 0; padding-right: 0; }
+.timeline-swipe-wrap.revealed .timeline-item { transform: translateX(-92px); }
+.timeline-item-chat { padding: 12px 0; }
+.timeline-inline-delete { position: absolute; top: 10px; right: 0; width: 18px; height: 18px; border: none; background: transparent; color: #cfcfcf; font-size: 16px; line-height: 18px; cursor: pointer; }
+.timeline-inline-delete:hover { color: #c0392b; }
 .timeline-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .timeline-dot { width: 4px; height: 4px; border-radius: 2px; }
 .timeline-date { font-size: 10px; font-family: 'IBM Plex Mono', monospace; color: #bbb; }
@@ -235,10 +243,21 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .no-tasks-text { padding: 40px 0; text-align: center; color: #bbb; font-size: 13px; }
 .timeline-view-chat { font-size: 9px; font-family: 'IBM Plex Mono', monospace; color: #c0392b; margin-left: 8px; }
 .upload-dropzone { padding: 14px; border: 1px dashed rgba(0,0,0,0.12); border-radius: 8px; text-align: center; cursor: pointer; font-size: 12px; color: #888; margin-bottom: 16px; }
+.detail-data-sections { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.detail-data-card { padding: 12px; background: #fff; border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; }
+.detail-data-title { margin-bottom: 10px; font-size: 11px; color: #999; font-family: 'IBM Plex Mono', monospace; text-transform: uppercase; letter-spacing: 0.4px; }
+.detail-data-list { display: flex; flex-direction: column; gap: 8px; }
+.detail-data-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.detail-data-label { flex-shrink: 0; font-size: 12px; color: #999; }
+.detail-data-value { text-align: right; font-size: 13px; line-height: 1.5; color: #333; }
 .files-list { display: flex; flex-direction: column; gap: 8px; }
 .file-row { display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #fff; border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; }
+.file-open-btn { flex: 1; min-width: 0; background: none; border: none; padding: 0; text-align: left; cursor: pointer; }
+.file-open-btn:disabled { cursor: default; }
 .file-row-left { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.file-row-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .file-row-name { font-size: 13px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row-summary { font-size: 11px; color: #999; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-remove-btn { background: none; border: none; color: #ccc; cursor: pointer; font-size: 12px; padding: 0 0 0 8px; }
 .no-files-text { font-size: 12px; color: #bbb; padding: 6px 0; }
 .talk-btn-recording { transform: scale(1.03); background: #c0392b; }
@@ -249,6 +268,10 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .detail-chat-empty { height: 100%; display: flex; align-items: center; justify-content: center; color: #888; font-size: 13px; text-align: center; }
 .detail-chat-listening { height: 100%; display: flex; align-items: center; justify-content: center; color: #c0392b; font-size: 15px; font-weight: 500; animation: pulse 1s infinite; }
 .detail-chat-bubble { max-width: 85%; font-size: 13px; padding: 10px 14px; }
+.detail-chat-inputbar { display: flex; gap: 8px; padding: 14px 16px 16px; border-top: 1px solid rgba(0,0,0,0.05); background: rgba(255,255,255,0.65); }
+.detail-chat-input { flex: 1; min-width: 0; border: 1px solid rgba(0,0,0,0.08); background: #fff; border-radius: 12px; padding: 10px 12px; font-size: 13px; outline: none; }
+.detail-chat-send-btn { border: none; background: #1a1a1a; color: #fff; border-radius: 12px; padding: 0 14px; font-size: 12px; font-family: 'IBM Plex Mono', monospace; cursor: pointer; }
+.detail-chat-send-btn:disabled { opacity: 0.45; cursor: default; }
 .edit-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.1); backdrop-filter: blur(4px); z-index: 100; }
 .edit-modal { position: absolute; top: 30%; left: 10%; width: 80%; max-width: 320px; background: #fff; border-radius: 24px; padding: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.15); z-index: 101; animation: fadeUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
 .edit-modal-title { font-size: 9px; font-family: 'IBM Plex Mono', monospace; color: #bbb; letter-spacing: 0.5px; margin-bottom: 16px; text-transform: uppercase; }
@@ -267,6 +290,9 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .history-chat-bubble-ai { font-style: normal; background: rgba(0,0,0,0.04); color: #333; border-radius: 4px 16px 16px 16px; }
 .history-chat-bubble-user { background: #1a1a1a; color: #faf9f7; border-radius: 16px 4px 16px 16px; }
 .history-modal-footer { padding: 16px; text-align: center; border-top: 1px solid rgba(0,0,0,0.04); font-size: 11px; color: #ccc; font-family: 'IBM Plex Mono', monospace; }
+.image-modal { position: absolute; top: 8%; left: 5%; width: 90%; height: 78%; background: #fff; border-radius: 28px; box-shadow: 0 20px 60px rgba(0,0,0,0.18); z-index: 101; display: flex; flex-direction: column; overflow: hidden; animation: fadeUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.image-modal-body { flex: 1; padding: 12px 16px 16px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.02); }
+.image-modal-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
 
 /* ── LOG VIEW INLINE EXTRACTIONS ── */
 .log-top-spacer { height: 40px; }
@@ -296,7 +322,14 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .log-glass-transcript { flex: 1 1 auto; overflow: auto; padding: 20px 24px; }
 
 /* ── SETTINGS VIEW INLINE EXTRACTIONS ── */
-.settings-domain-input { width: 100%; padding: 12px 16px; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; background: transparent; font-size: 15px; font-weight: 500; margin-bottom: 36px; }
+.settings-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.settings-save-status { min-width: 54px; text-align: right; font-size: 11px; font-family: 'IBM Plex Mono', monospace; }
+.settings-save-status.saving { color: #b45309; }
+.settings-save-status.saved { color: #2d6a4f; }
+.settings-domain-row { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; }
+.settings-domain-input { flex: 1; width: 100%; padding: 12px 16px; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; background: transparent; font-size: 15px; font-weight: 500; margin-bottom: 0; }
+.settings-domain-save-btn { flex-shrink: 0; min-width: 74px; height: 42px; padding: 0 16px; border: none; border-radius: 12px; background: #1a1a1a; color: #fff; font-size: 12px; font-family: 'IBM Plex Mono', monospace; cursor: pointer; }
+.settings-domain-save-btn:disabled { opacity: 0.7; cursor: default; }
 .settings-focus-desc { font-size: 13px; color: #888; margin-bottom: 16px; line-height: 1.5; }
 .settings-keyword-row { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
 .settings-keyword-input { flex: 1; padding: 8px 0; background: transparent; border: none; border-bottom: 1px solid rgba(0,0,0,0.1); border-radius: 0; font-size: 14px; }

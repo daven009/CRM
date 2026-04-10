@@ -1,8 +1,26 @@
 import React from "react";
 
+const clipText = (value, max = 32) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+};
+
+const summarizeHistory = (history = []) => {
+  const items = Array.isArray(history) ? history : [];
+  const userTurns = items.filter((item) => item?.r === "user").map((item) => String(item.t || "").trim()).filter(Boolean);
+  const aiTurns = items.filter((item) => item?.r === "ai").map((item) => String(item.t || "").trim()).filter(Boolean);
+
+  return {
+    summary: clipText(userTurns[0] || "沟通记录", 20),
+    detail: clipText(aiTurns[aiTurns.length - 1] || userTurns[1] || "点击查看完整聊天记录", 28)
+  };
+};
+
 export default function DetailView({
   sel, setSel, setView, hpColor, detailChat, setDetailChat, detailConvos, setDetailConvos,
-  detailText, setDetailText, detailTyping, detailSend, startNewDetailSession, closeDetailChat, recording, setRecording, detailRef
+  detailText, setDetailText, detailTyping, detailSend, startNewDetailSession, closeDetailChat, recording, setRecording, detailRef,
+  attachScreenshotToClient, saveDetailClient
 }) {
   const msgIdx = React.useRef(0);
   const [activeTab, setActiveTab] = React.useState("overview");
@@ -12,6 +30,13 @@ export default function DetailView({
   const [isDragging, setIsDragging] = React.useState(false);
 
   const [viewingLog, setViewingLog] = React.useState(null);
+  const [viewingFile, setViewingFile] = React.useState(null);
+  const [uploadingScreenshot, setUploadingScreenshot] = React.useState(false);
+  const [swipedLogIndex, setSwipedLogIndex] = React.useState(null);
+  const [editingLogIndex, setEditingLogIndex] = React.useState(null);
+  const [editingLogSummary, setEditingLogSummary] = React.useState("");
+  const screenshotInputRef = React.useRef(null);
+  const logPressTimerRef = React.useRef(null);
 
   React.useEffect(() => {
     if (detailChat && detailRef.current) {
@@ -66,10 +91,87 @@ export default function DetailView({
     if (newSocial.trim()) { sel.social = [...sel.social, newSocial.trim()]; setSel({ ...sel }); setNewSocial(""); }
   };
   const removeSocial = (idx) => { sel.social = sel.social.filter((_, i) => i !== idx); setSel({ ...sel }); };
-  const mockUpload = () => { sel.files = [...sel.files, `Document_${Math.floor(Math.random() * 900 + 100)}.pdf`]; setSel({ ...sel }); };
+  const normalizeFileEntry = (value) => {
+    if (typeof value === "string") {
+      return { name: value, summary: "", previewUrl: "", tags: [], details: [] };
+    }
+    return {
+      name: value?.name || "Untitled",
+      summary: value?.summary || "",
+      originalUrl: value?.originalUrl || value?.previewUrl || "",
+      previewUrl: value?.previewUrl || "",
+      tags: Array.isArray(value?.tags) ? value.tags : [],
+      details: Array.isArray(value?.details) ? value.details : []
+    };
+  };
   const removeFile = (idx) => { sel.files = sel.files.filter((_, i) => i !== idx); setSel({ ...sel }); };
-
   if (!sel) return null;
+
+  const commitClientUpdate = (nextClient) => {
+    setSel(nextClient);
+    if (typeof saveDetailClient === "function") {
+      saveDetailClient(nextClient);
+    }
+  };
+
+  const deleteTimelineItem = (idx) => {
+    const nextLog = (sel.log || []).filter((_, logIdx) => logIdx !== idx);
+    commitClientUpdate({ ...sel, log: nextLog });
+    setSwipedLogIndex(null);
+    if (viewingLog && sel.log?.[idx] === viewingLog) {
+      setViewingLog(null);
+    }
+  };
+
+  const startLogLongPress = (idx, summary) => {
+    clearTimeout(logPressTimerRef.current);
+    logPressTimerRef.current = setTimeout(() => {
+      setEditingLogIndex(idx);
+      setEditingLogSummary(summary || "");
+      setSwipedLogIndex(null);
+    }, 550);
+  };
+
+  const clearLogLongPress = () => clearTimeout(logPressTimerRef.current);
+
+  const saveTimelineSummary = () => {
+    if (editingLogIndex == null) return;
+    const nextSummary = editingLogSummary.trim();
+    const nextLog = (sel.log || []).map((item, idx) => {
+      if (idx !== editingLogIndex) return item;
+      return {
+        ...item,
+        tx: nextSummary || item.tx
+      };
+    });
+    commitClientUpdate({ ...sel, log: nextLog });
+    setEditingLogIndex(null);
+    setEditingLogSummary("");
+  };
+
+  const handlePickScreenshot = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!attachScreenshotToClient) return;
+
+    setUploadingScreenshot(true);
+    try {
+      await attachScreenshotToClient(sel.id, file);
+    } catch (err) {
+      console.error("[Screenshot] 上传失败:", err);
+      alert(err instanceof Error ? err.message : "截图上传失败");
+    } finally {
+      setUploadingScreenshot(false);
+      if (screenshotInputRef.current) screenshotInputRef.current.value = "";
+    }
+  };
+
+  const onDetailKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      detailSend(detailText);
+    }
+  };
 
   return (
     <div className="page">
@@ -171,20 +273,68 @@ export default function DetailView({
               <div className="tab-slide-pad">
                 <div className="detail-timeline" style={{ marginTop: 0 }}>
                   {sel.log.map((l, i) => (
-                    <div 
-                      key={i} 
-                      className="timeline-item" 
-                      onClick={() => l.history && setViewingLog(l)}
-                      style={{ cursor: l.history ? "pointer" : "default" }}
-                    >
-                      <div className="timeline-header">
-                        <div className="timeline-dot" style={{ background: l.src.includes("微信") || l.src.includes("WeChat") || l.src.includes("WhatsApp") ? "#8b5cf6" : l.src.includes("面谈") ? "#2d6a4f" : "#3b82f6" }} />
-                        <span className="timeline-date">{l.dt}</span>
-                        {l.history && <span className="timeline-view-chat">· view chat</span>}
-                      </div>
-                      <div className="timeline-text" style={{ color: l.history ? "#333" : "#777" }}>{l.tx}</div>
-                      {l.ai && <div className="timeline-ai">{l.ai}</div>}
-                    </div>
+                    (() => {
+                      const hasHistory = Array.isArray(l.history) && l.history.length > 0;
+                      const chatSummary = hasHistory ? summarizeHistory(l.history) : null;
+                      const displaySummary = hasHistory ? (l.tx || chatSummary.summary) : l.tx;
+
+                      return (
+                        <div key={i} className={`timeline-swipe-wrap ${swipedLogIndex === i ? "revealed" : ""}`}>
+                          <div className="timeline-swipe-actions">
+                            <button onClick={() => deleteTimelineItem(i)} className="timeline-delete-btn">Delete</button>
+                          </div>
+                          <div
+                            className={`timeline-item ${hasHistory ? "timeline-item-chat" : ""}`}
+                            onClick={() => hasHistory && setViewingLog(l)}
+                            onTouchStart={(e) => {
+                              startLogLongPress(i, displaySummary);
+                              setTouchStart(e.targetTouches[0].clientX);
+                              setTouchEnd(null);
+                            }}
+                            onTouchMove={(e) => {
+                              clearLogLongPress();
+                              setTouchEnd(e.targetTouches[0].clientX);
+                            }}
+                            onTouchEnd={() => {
+                              clearLogLongPress();
+                              if (touchStart != null && touchEnd != null) {
+                                const dist = touchStart - touchEnd;
+                                if (dist > 50) setSwipedLogIndex(i);
+                                else if (dist < -30) setSwipedLogIndex(null);
+                              }
+                              setTouchStart(null);
+                              setTouchEnd(null);
+                            }}
+                            onMouseDown={() => startLogLongPress(i, displaySummary)}
+                            onMouseUp={clearLogLongPress}
+                            onMouseLeave={clearLogLongPress}
+                            style={{ cursor: hasHistory ? "pointer" : "default" }}
+                          >
+                            <button
+                              type="button"
+                              className="timeline-inline-delete"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteTimelineItem(i);
+                              }}
+                            >
+                              ×
+                            </button>
+                            <div className="timeline-header">
+                              <div className="timeline-dot" style={{ background: l.src.includes("微信") || l.src.includes("WeChat") || l.src.includes("WhatsApp") ? "#8b5cf6" : l.src.includes("面谈") ? "#2d6a4f" : "#3b82f6" }} />
+                              <span className="timeline-date">{l.dt}</span>
+                              {hasHistory && <span className="timeline-view-chat">· view chat</span>}
+                            </div>
+                            <div className="timeline-text" style={{ color: hasHistory ? "#333" : "#777" }}>
+                              {displaySummary}
+                            </div>
+                            {(hasHistory || l.ai) && (
+                              <div className="timeline-ai">{hasHistory ? chatSummary.detail : l.ai}</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()
                   ))}
                 </div>
               </div>
@@ -194,15 +344,29 @@ export default function DetailView({
             <div className="tab-slide">
               <div className="tab-slide-pad-bottom">
                 <div className="files-list">
-                  {sel.files.map((f, i) => (
+                  {sel.files.map((rawFile, i) => {
+                    const f = normalizeFileEntry(rawFile);
+                    return (
                     <div key={i} className="file-row">
+                      <button
+                        type="button"
+                        className="file-open-btn"
+                        onClick={() => f.originalUrl && setViewingFile(f)}
+                        disabled={!f.originalUrl}
+                      >
                       <div className="file-row-left">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
-                        <span className="file-row-name">{f}</span>
+                        <div className="file-row-meta">
+                          <span className="file-row-name">{f.name}</span>
+                          {f.summary && <span className="file-row-summary">{f.summary}</span>}
+                        </div>
                       </div>
+                      </button>
                       <button onClick={() => removeFile(i)} className="file-remove-btn">✕</button>
                     </div>
-                  ))}
+                    );
+                  })}
+                  {uploadingScreenshot && <div className="no-files-text">Analyzing screenshot...</div>}
                   {sel.files.length === 0 && <div className="no-files-text">No documents yet.</div>}
                 </div>
 
@@ -215,19 +379,22 @@ export default function DetailView({
 
       {/* Bottom action bar */}
       <div className="talk-btn-container" style={{ zIndex: 5 }}>
-        <button onClick={mockUpload} className="detail-add-btn">
+        <input
+          ref={screenshotInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handlePickScreenshot}
+          style={{ display: "none" }}
+        />
+        <button onClick={() => screenshotInputRef.current?.click()} className="detail-add-btn" disabled={uploadingScreenshot}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
         </button>
         <button
-          onMouseDown={() => { startNewDetailSession(); setRecording(true); }}
-          onMouseUp={() => { setRecording(false); detailSend(); }}
-          onMouseLeave={() => setRecording(false)}
-          onTouchStart={(e) => { e.preventDefault(); startNewDetailSession(); setRecording(true); }}
-          onTouchEnd={(e) => { e.preventDefault(); setRecording(false); detailSend(); }}
-          className={`talk-btn ${recording ? "talk-btn-recording" : "talk-btn-idle"}`}
+          onClick={() => startNewDetailSession()}
+          className="talk-btn talk-btn-idle"
         >
-          <div className="talk-dot" style={{ animation: recording ? "pulse 1s infinite" : "none" }} />
-          {recording ? "listening..." : `hold to talk about ${sel.n.split(' ')[0]}`}
+          <div className="talk-dot" />
+          {`talk to ${sel.n.split(' ')[0]}`}
         </button>
       </div>
 
@@ -240,12 +407,7 @@ export default function DetailView({
           <div className="detail-chat-inner">
             {detailConvos.length === 0 && !recording && (
               <div className="detail-chat-empty">
-                Hold the button below to start talking.
-              </div>
-            )}
-            {detailConvos.length === 0 && recording && (
-              <div className="detail-chat-listening">
-                ...Listening...
+                Start chatting with the agent about {sel.n}.
               </div>
             )}
             {detailConvos.map((c, i) => (
@@ -255,6 +417,18 @@ export default function DetailView({
             ))}
             {detailTyping && <div className="typing-indicator" style={{ marginBottom: 16 }}><div className="typing-box">{[0, 1, 2].map(i => <div key={i} className="dot" />)}</div></div>}
             <div ref={detailRef} />
+          </div>
+          <div className="detail-chat-inputbar">
+            <input
+              value={detailText}
+              onChange={(e) => setDetailText(e.target.value)}
+              onKeyDown={onDetailKeyDown}
+              placeholder={`Ask about ${sel.n}...`}
+              className="detail-chat-input"
+            />
+            <button onClick={() => detailSend(detailText)} className="detail-chat-send-btn" disabled={!detailText.trim() || detailTyping}>
+              Send
+            </button>
           </div>
         </div>
       )}
@@ -324,6 +498,42 @@ export default function DetailView({
             
             <div className="history-modal-footer">
               Tap outside to dismiss
+            </div>
+          </div>
+        </>
+      )}
+
+      {viewingFile && (
+        <>
+          <div onClick={() => setViewingFile(null)} className="history-overlay" />
+          <div className="image-modal">
+            <div className="history-modal-header">
+              <div className="history-modal-label">Screenshot</div>
+              <div className="history-modal-title">{viewingFile.name}</div>
+            </div>
+            <div className="image-modal-body">
+              <img src={viewingFile.originalUrl} alt={viewingFile.name} className="image-modal-img" />
+            </div>
+          </div>
+        </>
+      )}
+
+      {editingLogIndex != null && (
+        <>
+          <div onClick={saveTimelineSummary} className="edit-overlay" />
+          <div className="edit-modal">
+            <div className="edit-modal-title">Edit Timeline Summary</div>
+            <div className="edit-field">
+              <div className="edit-field-label">SUMMARY</div>
+              <input
+                autoFocus
+                value={editingLogSummary}
+                onChange={(e) => setEditingLogSummary(e.target.value)}
+                className="account-input edit-task-input"
+              />
+            </div>
+            <div className="edit-modal-hint">
+              Click outside to save
             </div>
           </div>
         </>

@@ -16,6 +16,13 @@ export const getSupabaseClient = () => {
 };
 
 const normalizeArray = (value) => (Array.isArray(value) ? value : []);
+const SETTINGS_ROW_ID = 1;
+const CONTACT_FILES_BUCKET = "crm-contact-files";
+
+const sanitizeFilename = (name) => String(name || "file")
+  .replace(/[^a-zA-Z0-9._-]+/g, "-")
+  .replace(/-+/g, "-")
+  .replace(/^-|-$/g, "");
 
 export const fromDbClient = (row) => ({
   id: Number(row.id),
@@ -95,4 +102,73 @@ export const deleteClientFromSupabase = async (clientId) => {
     .eq("id", Number(clientId));
 
   if (error) throw error;
+};
+
+export const loadSettingsFromSupabase = async () => {
+  const supabase = getSupabaseClient();
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("crm_settings")
+    .select("*")
+    .eq("id", SETTINGS_ROW_ID)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  return {
+    domain: String(data.domain || "").trim(),
+    keywords: normalizeArray(data.keywords).map((v) => String(v || "").trim()).filter(Boolean),
+    knowledgeFiles: normalizeArray(data.knowledge_files)
+  };
+};
+
+export const upsertSettingsToSupabase = async (settings = {}) => {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+
+  const payload = {
+    id: SETTINGS_ROW_ID,
+    domain: String(settings.domain || "").trim(),
+    keywords: normalizeArray(settings.keywords).map((v) => String(v || "").trim()).filter(Boolean),
+    knowledge_files: normalizeArray(settings.knowledgeFiles),
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await supabase
+    .from("crm_settings")
+    .upsert(payload, { onConflict: "id" });
+
+  if (error) throw error;
+};
+
+export const uploadContactFileToStorage = async ({ clientId, file }) => {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error("未配置 Supabase，无法上传文件。");
+  if (!file) throw new Error("未选择文件。");
+
+  const timestamp = Date.now();
+  const safeName = sanitizeFilename(file.name || "upload");
+  const path = `${Number(clientId)}/${timestamp}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(CONTACT_FILES_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type || "application/octet-stream"
+    });
+
+  if (uploadError) throw uploadError;
+
+  const { data } = supabase.storage
+    .from(CONTACT_FILES_BUCKET)
+    .getPublicUrl(path);
+
+  return {
+    bucket: CONTACT_FILES_BUCKET,
+    path,
+    publicUrl: data?.publicUrl || ""
+  };
 };

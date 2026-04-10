@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { createLLMCaller, getAvailableModels, extractTextFromModelResponse } from "../lib/models/index.js";
+import { getAvailableModels } from "../lib/models/index.js";
+import { buildCrmPromptContext, runCrmPipeline } from "../lib/crmPipeline.js";
 
 /*
  * =========================================================
@@ -43,6 +44,8 @@ const LIMITS = {
   MAX_TOTAL_LLM_CALLS: 4
 };
 
+const SETTINGS_KEY = "crm.settings.v1";
+
 /*
  * =========================================================
  * SECTION 1 · Shared Utilities
@@ -62,6 +65,22 @@ const toPrettyJson = (v) => {
     return JSON.stringify(v, null, 2);
   } catch {
     return String(v);
+  }
+};
+
+const loadUserIntelligence = () => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { domain: "", keywords: [] };
+    const parsed = JSON.parse(raw);
+    return {
+      domain: String(parsed?.domain || "").trim(),
+      keywords: Array.isArray(parsed?.keywords)
+        ? parsed.keywords.map((v) => String(v || "").trim()).filter(Boolean)
+        : []
+    };
+  } catch {
+    return { domain: "", keywords: [] };
   }
 };
 
@@ -162,7 +181,14 @@ const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) 
   company: c.co,
   role: c.role,
   hp: c.hp,
-  todoOpenCount: (c.todos || []).filter((t) => !t.done).length
+  todoOpenCount: (c.todos || []).filter((t) => !t.done).length,
+  materials: (Array.isArray(c.files) ? c.files : [])
+    .slice(0, 3)
+    .map((item) => {
+      if (typeof item === "string") return item;
+      return item?.summary || item?.name || "";
+    })
+    .filter(Boolean)
 }));
 
 /*
@@ -171,10 +197,14 @@ const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) 
  * =========================================================
  */
 
-const buildSystemPrompt = ({ currentDate, currentYear }) => `你是 RelateAI（Customer Relationship Management 语义理解及行为路由编排器）。
+const buildSystemPrompt = ({ currentDate, currentYear, domain, keywords }) => `你是 RelateAI（Customer Relationship Management 语义理解及行为路由编排器）。
 
 # 用户Profile
 - 用户的角色是：保险中介
+- 用户的专业领域是：${domain || "未指定"}
+- 用户当前重点关注的机会关键词：${keywords.length > 0 ? keywords.join("、") : "未指定"}
+- 当用户请求分析、建议、跟进策略、话术生成时，优先结合上述领域和关键词进行判断。
+- 若领域或关键词为空，不要编造额外偏好，按通用 CRM 助手处理。
 
 # 时间基准
 - 当前日期（系统注入）: ${currentDate}
@@ -187,6 +217,7 @@ const buildSystemPrompt = ({ currentDate, currentYear }) => `你是 RelateAI（C
 - 前端不会做业务语义推断，只会按你输出执行；因此你的结构必须严格正确。
 - 你的特长是客户关系管理，你需要协助用户管理客户关系，语气专业但不失温柔从容，结尾通常以挖掘更多用户需求为主，以及给用户合适的提示
 - 根据用户角色挖掘客户关系，重大角色业务相关的客户的需求，时间及销售建议
+- 在不偏离用户原始意图的前提下，优先从用户专业领域和重点关键词相关的机会切入。
 
 
 # 严格输出格式（只允许 JSON 对象，不允许任何解释文本）
@@ -276,7 +307,8 @@ const buildPromptContext = (inputText, clients, conversationHistory = []) => {
   const now = new Date();
   const currentDate = now.toISOString().slice(0, 10);
   const currentYear = now.getFullYear();
-  const systemPrompt = buildSystemPrompt({ currentDate, currentYear });
+  const { domain, keywords } = loadUserIntelligence();
+  const systemPrompt = buildSystemPrompt({ currentDate, currentYear, domain, keywords });
 
   const normalizedHistory = (conversationHistory || [])
     .filter((turn) => turn?.userText)
@@ -305,6 +337,11 @@ const buildPromptContext = (inputText, clients, conversationHistory = []) => {
   const userPayload = {
     input: inputText,
     clients: clientBrief,
+    user_profile: {
+      role: "保险中介",
+      domain,
+      keywords
+    },
     time_anchor: {
       currentDate,
       currentYear
@@ -867,8 +904,9 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
   const [selectedTurn, setSelectedTurn] = useState(null);
   const [running, setRunning] = useState(false);
   const [showFullPrompt, setShowFullPrompt] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("minimax");
   const availableModels = getAvailableModels();
+  const firstConfiguredModel = availableModels.find((m) => m.configured)?.id || "minimax";
+  const [selectedModel, setSelectedModel] = useState(firstConfiguredModel);
 
   const chatEndRef = useRef(null);
 
@@ -876,11 +914,17 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, running]);
 
+  useEffect(() => {
+    if (!availableModels.some((m) => m.id === selectedModel && m.configured)) {
+      setSelectedModel(firstConfiguredModel);
+    }
+  }, [availableModels, firstConfiguredModel, selectedModel]);
+
   const currentTurn = selectedTurn != null
     ? chatHistory[selectedTurn]
     : (chatHistory.length > 0 ? chatHistory[chatHistory.length - 1] : null);
 
-  const promptPanelData = currentTurn?.requestMeta || buildPromptContext(inputText || "...", clients || []);
+  const promptPanelData = currentTurn?.requestMeta || buildCrmPromptContext(inputText || "...", clients || []);
 
   const onSend = async () => {
     const text = inputText.trim();
@@ -899,7 +943,7 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
       }));
 
     try {
-      const result = await runPipeline(text, clients || [], prevHistory, selectedModel);
+      const result = await runCrmPipeline(text, clients || [], prevHistory, selectedModel);
 
       const commitResult = typeof applyPlaygroundActions === "function"
         ? applyPlaygroundActions(result.actions || [])
@@ -926,7 +970,7 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
       setChatHistory((prev) => [...prev, turn]);
       setSelectedTurn(null);
     } catch (err) {
-      const failedContext = buildPromptContext(text, clients || [], prevHistory);
+      const failedContext = buildCrmPromptContext(text, clients || [], prevHistory);
       setChatHistory((prev) => [...prev, {
         userText: text,
         reply: "",

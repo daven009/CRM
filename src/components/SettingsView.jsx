@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { isSupabaseEnabled, loadSettingsFromSupabase, upsertSettingsToSupabase } from "../lib/supabaseClient";
 
 const SETTINGS_KEY = "crm.settings.v1";
 
@@ -34,9 +35,11 @@ const loadSettings = () => {
 export default function SettingsView({ setView, settingsTab, setSettingsTab, aiTone, setAiTone }) {
   const initial = loadSettings();
   const [domain, setDomain] = useState(initial.domain);
+  const [savedDomain, setSavedDomain] = useState(initial.domain);
   const [newUrl, setNewUrl] = useState("");
-  
   const [knowledgeFiles, setKnowledgeFiles] = useState(initial.knowledgeFiles);
+  const [saveState, setSaveState] = useState("idle");
+  const [remoteHydrated, setRemoteHydrated] = useState(false);
 
   const addUrl = () => {
     if (newUrl.trim() && !knowledgeFiles.some(f => f.name === newUrl)) {
@@ -45,7 +48,7 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
     }
   };
 
-  const [keywords, setKeywords] = useState(DEFAULT_KEYWORDS);
+  const [keywords, setKeywords] = useState(initial.keywords);
   const [newKeyword, setNewKeyword] = useState("");
 
   const addKeyword = () => {
@@ -57,6 +60,89 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
   const removeKeyword = (k) => {
     setKeywords(keywords.filter(x => x !== k));
   };
+
+  const persistSettings = async (payload) => {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
+    if (isSupabaseEnabled()) {
+      await upsertSettingsToSupabase(payload);
+    }
+  };
+
+  const handleSaveDomain = async () => {
+    const nextDomain = domain.trim();
+    const payload = {
+      domain: nextDomain,
+      keywords,
+      knowledgeFiles
+    };
+
+    setSaveState("saving");
+    try {
+      await persistSettings(payload);
+      setSavedDomain(nextDomain);
+      setDomain(nextDomain);
+      setSaveState("saved");
+    } catch (err) {
+      console.error("[Supabase] 保存 domain 失败:", err);
+      setSaveState("idle");
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateFromSupabase = async () => {
+      if (!isSupabaseEnabled()) {
+        setRemoteHydrated(true);
+        return;
+      }
+
+      try {
+        const remote = await loadSettingsFromSupabase();
+        if (!cancelled && remote) {
+          setDomain(remote.domain || "");
+          setSavedDomain(remote.domain || "");
+          setKeywords(Array.isArray(remote.keywords) ? remote.keywords : []);
+          setKnowledgeFiles(Array.isArray(remote.knowledgeFiles) ? remote.knowledgeFiles : []);
+        }
+      } catch (err) {
+        console.error("[Supabase] 加载 settings 失败:", err);
+      } finally {
+        if (!cancelled) setRemoteHydrated(true);
+      }
+    };
+
+    hydrateFromSupabase();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!remoteHydrated) return undefined;
+
+    const payload = {
+      domain: savedDomain.trim(),
+      keywords,
+      knowledgeFiles
+    };
+
+    const timer = setTimeout(async () => {
+      try {
+        await persistSettings(payload);
+      } catch (err) {
+        console.error("[Supabase] 保存 settings 失败:", err);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [savedDomain, keywords, knowledgeFiles, remoteHydrated]);
+
+  useEffect(() => {
+    if (saveState !== "saved") return undefined;
+    const timer = setTimeout(() => setSaveState("idle"), 1200);
+    return () => clearTimeout(timer);
+  }, [saveState]);
+
+  const domainDirty = domain.trim() !== savedDomain.trim();
 
   return (
     <div className="page" style={{ background: "#faf9f7" }}>
@@ -76,8 +162,20 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
         {/* --- INTELLIGENCE TAB --- */}
         {settingsTab === "account" && <div style={{ animation: "fadeUp 0.3s ease" }}>
           
-          <div className="section-label" style={{ marginBottom: 12 }}>YOUR EXPERTISE DOMAIN</div>
-          <input value={domain} onChange={e=>setDomain(e.target.value)} placeholder="e.g. Real Estate, Wealth Management..." className="account-input settings-domain-input" />
+          <div className="settings-section-head">
+            <div className="section-label">YOUR EXPERTISE DOMAIN</div>
+            <div className={`settings-save-status ${saveState}`}>
+              {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : ""}
+            </div>
+          </div>
+          <div className="settings-domain-row">
+            <input value={domain} onChange={e=>setDomain(e.target.value)} placeholder="e.g. Real Estate, Wealth Management..." className="account-input settings-domain-input" />
+            {domainDirty && (
+              <button onClick={handleSaveDomain} className="settings-domain-save-btn" disabled={saveState === "saving"}>
+                {saveState === "saving" ? "Saving..." : "Save"}
+              </button>
+            )}
+          </div>
 
           <div className="section-label" style={{ marginBottom: 16 }}>STRATEGIC FOCUS KEYWORDS</div>
           <div className="settings-focus-desc">
