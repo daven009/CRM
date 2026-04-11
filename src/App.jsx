@@ -149,6 +149,7 @@ export default function App() {
   const [detailTyping, setDetailTyping] = useState(false);
   const detailRef = useRef(null);
   const sessionLogIdRef = useRef(null);
+  const detailArchiveInFlightRef = useRef(false);
   const [aiTone, setAiTone] = useState("casual");
   const [standalonePlayground, setStandalonePlayground] = useState(() => detectStandalonePlayground());
   const [dbHydrated, setDbHydrated] = useState(false);
@@ -347,7 +348,7 @@ export default function App() {
       );
       const commitResult = applyPlaygroundActions(result.actions || []);
       const latestSel = (result.actions || []).length > 0
-        ? clients.find((client) => client.id === sel.id) || sel
+        ? commitResult.workingClients?.find((client) => client.id === sel.id) || sel
         : sel;
       if (latestSel?.id === sel.id) setSel(latestSel);
 
@@ -371,40 +372,55 @@ export default function App() {
   };
 
   const closeDetailChat = async () => {
+    if (detailArchiveInFlightRef.current) return;
     if (detailConvos.length > 0 && sel) {
+      detailArchiveInFlightRef.current = true;
       const d = new Date();
       const todayStr = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
       const timeStr = d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
       const sid = sessionLogIdRef.current || Date.now();
       const savedConvos = [...detailConvos];
-      const timelineSummary = await summarizeConversationWithOpenAI({
-        history: savedConvos,
-        clientName: sel.n
-      });
+      setDetailChat(false);
+      setDetailConvos([]);
+      setDetailText("");
+      sessionLogIdRef.current = null;
 
-      setClients(prev => prev.map(c => {
-        if (c.id !== sel.id) return c;
-        const logEntry = {
-          sid,
-          d: sid,
-          dt: todayStr,
-          src: "对话",
-          tx: timelineSummary,
-          ai: "已归档沟通转录",
-          history: savedConvos
-        };
-        return { ...c, log: [logEntry, ...(c.log || [])] };
-      }));
+      try {
+        const timelineSummary = await summarizeConversationWithOpenAI({
+          history: savedConvos,
+          clientName: sel.n
+        });
 
-      setHistory(hPrev => [{
-        sid,
-        year: d.getFullYear(),
-        date: todayStr,
-        time: timeStr,
-        summary: `与${sel.n}新增${savedConvos.length}条沟通记录`,
-        clients: [sel.n],
-        convos: savedConvos
-      }, ...hPrev]);
+        setClients(prev => prev.map(c => {
+          if (c.id !== sel.id) return c;
+          const logEntry = {
+            sid,
+            d: sid,
+            dt: todayStr,
+            src: "对话",
+            tx: timelineSummary,
+            ai: "已归档沟通转录",
+            history: savedConvos
+          };
+          const nextLog = [logEntry, ...(c.log || []).filter((item) => item?.sid !== sid)];
+          return { ...c, log: nextLog };
+        }));
+
+        setHistory(hPrev => {
+          const nextItem = {
+            sid,
+            year: d.getFullYear(),
+            date: todayStr,
+            time: timeStr,
+            summary: `与${sel.n}新增${savedConvos.length}条沟通记录`,
+            clients: [sel.n],
+            convos: savedConvos
+          };
+          return [nextItem, ...hPrev.filter((item) => item?.sid !== sid)];
+        });
+      } finally {
+        detailArchiveInFlightRef.current = false;
+      }
     }
 
     setDetailChat(false);
@@ -481,7 +497,7 @@ export default function App() {
 
   const applyPlaygroundActions = (actions = []) => {
     if (!Array.isArray(actions) || actions.length === 0) {
-      return { applied: 0, upserted: 0, deleted: 0 };
+      return { applied: 0, upserted: 0, deleted: 0, workingClients: clients };
     }
 
     let working = clients;
@@ -509,7 +525,8 @@ export default function App() {
     return {
       applied,
       upserted: upsertMap.size,
-      deleted: deleteIds.size
+      deleted: deleteIds.size,
+      workingClients: working
     };
   };
 

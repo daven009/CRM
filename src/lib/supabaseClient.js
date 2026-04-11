@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { normalizeKnowledgeSource } from "./knowledgeSources";
 
 const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "").trim();
 const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
@@ -120,7 +121,7 @@ export const loadSettingsFromSupabase = async () => {
   return {
     domain: String(data.domain || "").trim(),
     keywords: normalizeArray(data.keywords).map((v) => String(v || "").trim()).filter(Boolean),
-    knowledgeFiles: normalizeArray(data.knowledge_files),
+    knowledgeFiles: normalizeArray(data.knowledge_files).map((item) => normalizeKnowledgeSource(item)).filter(Boolean),
     modelProvider: String(data.model_provider || "").trim()
   };
 };

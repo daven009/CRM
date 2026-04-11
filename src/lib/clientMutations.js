@@ -81,6 +81,14 @@ const pickProfileChanges = (client, rawUpdates = {}) => {
     next.tel = updates.tel;
     changed.push("电话");
   }
+  if (updates.phone !== undefined && updates.phone !== client.tel) {
+    next.tel = updates.phone;
+    changed.push("电话");
+  }
+  if (updates.mobile !== undefined && updates.mobile !== client.tel) {
+    next.tel = updates.mobile;
+    changed.push("电话");
+  }
 
   return { next, changed };
 };

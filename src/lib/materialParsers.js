@@ -1,9 +1,13 @@
 import * as XLSX from "xlsx";
 import mammoth from "mammoth";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString();
 
 const MAX_CELL_CHARS = 160;
 const MAX_SPREADSHEET_EXTRACT_CHARS = 18000;
 const MAX_WORD_EXTRACT_CHARS = 12000;
+const MAX_PDF_EXTRACT_CHARS = 20000;
 const MAX_PREVIEW_ROWS = 10;
 
 const clipText = (value, max = 1200) => {
@@ -22,6 +26,7 @@ const inferKind = (file) => {
   const type = String(file?.type || "").toLowerCase();
 
   if (type.startsWith("image/")) return "screenshot";
+  if (type === "application/pdf" || name.endsWith(".pdf")) return "pdf";
   if (name.endsWith(".csv") || name.endsWith(".xlsx") || name.endsWith(".xls")) return "spreadsheet";
   if (name.endsWith(".docx") || name.endsWith(".doc")) return "document";
   return "generic";
@@ -122,15 +127,62 @@ const parseWorkbook = (arrayBuffer) => {
 };
 
 const parseWordDocument = async (arrayBuffer) => {
-  const result = await mammoth.extractRawText({ arrayBuffer });
-  const text = String(result?.value || "").trim();
-  const paragraphs = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  try {
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    const text = String(result?.value || "").trim();
+    const paragraphs = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+
+    return {
+      excerpt: clipText(text, MAX_WORD_EXTRACT_CHARS),
+      paragraphs: paragraphs.slice(0, 12),
+      paragraphCount: paragraphs.length,
+      truncated: text.length > MAX_WORD_EXTRACT_CHARS
+    };
+  } catch {
+    const fallbackText = new TextDecoder("latin1").decode(arrayBuffer);
+    const segments = fallbackText.match(/[A-Za-z0-9\u4e00-\u9fff\s,.;:!?'"()\-_/]{6,}/g) || [];
+    const cleaned = segments
+      .map((segment) => segment.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .slice(0, 200);
+    const text = cleaned.join("\n");
+    const paragraphs = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+
+    return {
+      excerpt: clipText(text, MAX_WORD_EXTRACT_CHARS),
+      paragraphs: paragraphs.slice(0, 12),
+      paragraphCount: paragraphs.length,
+      truncated: text.length > MAX_WORD_EXTRACT_CHARS
+    };
+  }
+};
+
+const parsePdfDocument = async (arrayBuffer) => {
+  const loadingTask = pdfjsLib.getDocument({
+    data: arrayBuffer,
+    useWorkerFetch: false
+  });
+  const pdf = await loadingTask.promise;
+  const pages = [];
+
+  for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
+    const page = await pdf.getPage(pageIndex);
+    const content = await page.getTextContent();
+    const text = (content.items || [])
+      .map((item) => String(item.str || "").trim())
+      .filter(Boolean)
+      .join(" ");
+    if (text) pages.push(`Page ${pageIndex}: ${text}`);
+  }
+
+  const combined = pages.join("\n\n");
+  const pageSummaries = pages.slice(0, 6);
 
   return {
-    excerpt: clipText(text, MAX_WORD_EXTRACT_CHARS),
-    paragraphs: paragraphs.slice(0, 12),
-    paragraphCount: paragraphs.length,
-    truncated: text.length > MAX_WORD_EXTRACT_CHARS
+    excerpt: clipText(combined, MAX_PDF_EXTRACT_CHARS),
+    pages: pageSummaries,
+    pageCount: pdf.numPages,
+    truncated: combined.length > MAX_PDF_EXTRACT_CHARS || pdf.numPages > pageSummaries.length
   };
 };
 
@@ -162,6 +214,16 @@ export const parseMaterialFile = async (file) => {
     return {
       ...base,
       extractedText: parsed.extractedText,
+      parsedPreview: parsed
+    };
+  }
+
+  if (kind === "pdf") {
+    const arrayBuffer = await file.arrayBuffer();
+    const parsed = await parsePdfDocument(arrayBuffer);
+    return {
+      ...base,
+      extractedText: parsed.excerpt,
       parsedPreview: parsed
     };
   }

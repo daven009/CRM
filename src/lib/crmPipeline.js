@@ -1,4 +1,5 @@
 import { createLLMCaller, extractTextFromModelResponse } from "./models/index.js";
+import { buildKnowledgeContext, normalizeKnowledgeSource } from "./knowledgeSources.js";
 
 const ACTION_WHITELIST = [
   "add_trait", "remove_trait",
@@ -27,7 +28,6 @@ const ACTION_SCHEMA = {
 const INTENT_TYPES = ["RECORD", "COMMAND", "QUERY", "KNOWLEDGE", "GENERATE", "RECOMMEND", "CHAT"];
 
 const LIMITS = {
-  MAX_HISTORY_TURNS: 10,
   MAX_ACTIONS: 30,
   MAX_INTENTS: 12,
   MAX_REPAIR_ROUNDS: 2,
@@ -112,16 +112,19 @@ const toPrettyJson = (v) => {
 const loadUserIntelligence = () => {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { domain: "", keywords: [] };
+    if (!raw) return { domain: "", keywords: [], knowledgeFiles: [] };
     const parsed = JSON.parse(raw);
     return {
       domain: String(parsed?.domain || "").trim(),
       keywords: Array.isArray(parsed?.keywords)
         ? parsed.keywords.map((v) => String(v || "").trim()).filter(Boolean)
+        : [],
+      knowledgeFiles: Array.isArray(parsed?.knowledgeFiles)
+        ? parsed.knowledgeFiles.map((item) => normalizeKnowledgeSource(item)).filter(Boolean)
         : []
     };
   } catch {
-    return { domain: "", keywords: [] };
+    return { domain: "", keywords: [], knowledgeFiles: [] };
   }
 };
 
@@ -221,7 +224,7 @@ const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) 
   materials: buildMaterialContext(c.files, 3).map((item) => item.promptContext || item.summary || item.name).filter(Boolean)
 }));
 
-const buildSystemPrompt = ({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit }) => `你是 RelateAI（Customer Relationship Management 语义理解及行为路由编排器）。
+const buildSystemPrompt = ({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit, knowledgeContext }) => `你是 RelateAI（Customer Relationship Management 语义理解及行为路由编排器）。
 
 # 用户Profile
 - 用户的角色是：保险中介
@@ -237,6 +240,17 @@ ${lockedClient
 - 若当前联系人存在资料文件（Data），你必须将这些资料视为强上下文，在分析需求、生成建议、起草话术、判断下一步动作时优先引用，不要忽略其中的数字、时间、金额、承诺、方案细节。
 - 若资料中同时存在 summary / promptContext / extractedTextExcerpt / parsedPreview，信息优先级应为：extractedTextExcerpt 和 parsedPreview > promptContext > details > summary。
 - 若摘要内容与原始抽取内容（extractedTextExcerpt / parsedPreview）不一致，必须以原始抽取内容为准，不要被旧摘要误导。
+- ${knowledgeContext.items.length > 0
+    ? `当前已注入 ${knowledgeContext.includedCount} 份用户知识文档（总量 ${knowledgeContext.totalCount} 份）。`
+    : "当前没有用户知识文档。"}
+- 若用户上传了知识文档（Knowledge），这些文档是用户自己的知识库。回答知识问答、方案建议、话术生成、产品比较和行动建议时，优先参考 knowledge_sources，而不是泛化猜测。
+- 若 knowledge_sources 中同时存在 summary / promptContext / extractedTextExcerpt / parsedPreview，优先级同样是 extractedTextExcerpt 和 parsedPreview > promptContext > details > summary。
+- 若 knowledge_sources_meta.truncated = true，你必须始终区分“全集总量”和“当前注入子集”，绝对不能把当前注入数量误说成全集总量。
+- 如果用户询问知识库中的数量、要求枚举、要求汇总、要求“全部展示/完整内容/所有项目”，而 knowledge_sources_meta.truncated = true：
+  1) 先回答全集总量 totalCount；
+  2) 再明确说明当前回答基于一个被截断的子集，当前只注入了前 includedCount 项；
+  3) 如用户继续要求完整展开，再基于全集继续响应；
+  4) 若你无法访问全集，只能诚实说明当前仅基于已注入子集回答。
 - 若用户询问“待办 / tasks / follow-up / 下一步”，你必须只依据显式提供的待办字段回答，例如 todoOpenCount、openTodos、current_focus_client.open_todos。
 - 对于待办问题，禁止从资料文件、保单内容、聊天摘要、traits 或其他上下文中推断或臆造待办事项；如果待办字段不足以支撑“列出全部待办”，必须明确说明你只能根据当前提供的待办字段回答。
 - 为控制篇幅，某些上下文集合可能只会提供一个子集，并通过对应的 *_meta 字段告诉你：总量 totalCount、当前注入数量 includedCount、是否截断 truncated、默认上限 defaultLimit。
@@ -259,6 +273,9 @@ ${lockedClient
 - 你的特长是客户关系管理，你需要协助用户管理客户关系，语气专业但不失温柔从容，结尾通常以挖掘更多用户需求为主，以及给用户合适的提示
 - 根据用户角色挖掘客户关系，重大角色业务相关的客户的需求，时间及销售建议
 - 在不偏离用户原始意图的前提下，优先从用户专业领域和重点关键词相关的机会切入。
+- 对于明确的 QUERY / COMMAND / RECORD，默认先直接返回事实结果或执行结果，不要自动扩展成泛化建议、销售分析或下一步引导；只有当用户显式要求“建议 / 策略 / 怎么做 / 继续展开”时，才补充分析。
+- 对于明确查询，reply 尽量短，优先回答数值、列表、是否存在、最新状态等结果。
+- 对于明确命令，reply 尽量短，优先回答“已更新 / 已记录 / 已删除 / 已完成 / 已创建”等执行结果。
 
 # 严格输出格式（只允许 JSON 对象，不允许任何解释文本）
 {
@@ -299,6 +316,7 @@ ${toPrettyJson(ACTION_SCHEMA)}
 - 只要涉及明确数据变更诉求，必须包含 COMMAND 或 RECORD，并给出可执行 actions。
 - 纯知识问答/泛讨论优先 KNOWLEDGE 或 CHAT，actions 应为空。
 - 若信息不足或对象不明确，needs_clarification=true，actions=[]。
+- 若主意图是 QUERY / COMMAND / RECORD，reply 应优先保持简短，不要把回答扩展成大段顾问式建议。
 
 # Action 定义
 - add_trait：为客户画像添加标签、特征或偏好。
@@ -337,16 +355,16 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
   const now = new Date();
   const currentDate = now.toISOString().slice(0, 10);
   const currentYear = now.getFullYear();
-  const { domain, keywords } = loadUserIntelligence();
+  const { domain, keywords, knowledgeFiles } = loadUserIntelligence();
   const lockedClient = options?.lockedClient || null;
   const materialLimit = Number.isFinite(Number(options?.materialLimit)) ? Number(options.materialLimit) : DEFAULT_MATERIAL_LIMIT;
-  const systemPrompt = buildSystemPrompt({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit });
+  const knowledgeContext = buildKnowledgeContext(knowledgeFiles);
+  const systemPrompt = buildSystemPrompt({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit, knowledgeContext });
   const lockedClientMaterials = lockedClient ? buildMaterialContext(lockedClient.files, materialLimit) : [];
   const lockedClientTodos = lockedClient ? buildTodoContext(lockedClient.todos, 20) : [];
 
   const normalizedHistory = (conversationHistory || [])
-    .filter((turn) => turn?.userText)
-    .slice(-LIMITS.MAX_HISTORY_TURNS);
+    .filter((turn) => turn?.userText);
 
   const historyMessages = normalizedHistory.flatMap((turn, idx) => {
     const userText = clipText(turn.userText, 800);
@@ -403,6 +421,17 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
         note: Array.isArray(lockedClient.files) && lockedClient.files.length > materialLimit
           ? `该集合已被截断。回答时必须区分全集(totalCount=${lockedClient.files.length})和当前注入子集(includedCount=${materialLimit})，不能混淆。`
           : "当前已注入全部资料。"
+      }
+      : null,
+    knowledge_sources: knowledgeContext.items,
+    knowledge_sources_meta: knowledgeContext.totalCount > 0
+      ? {
+        totalCount: knowledgeContext.totalCount,
+        includedCount: knowledgeContext.includedCount,
+        truncated: knowledgeContext.truncated,
+        defaultLimit: knowledgeContext.defaultLimit,
+        collectionLabel: knowledgeContext.collectionLabel,
+        note: knowledgeContext.note
       }
       : null,
     time_anchor: {

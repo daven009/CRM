@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { isSupabaseEnabled, loadSettingsFromSupabase, upsertSettingsToSupabase } from "../lib/supabaseClient";
 import { getAvailableModels } from "../lib/models";
+import { analyzeMaterialWithOpenAI } from "../lib/models/openaiMaterial";
+import { parseMaterialFile } from "../lib/materialParsers";
+import { normalizeKnowledgeSource } from "../lib/knowledgeSources";
 
 const SETTINGS_KEY = "crm.settings.v1";
 
@@ -8,6 +11,14 @@ const DEFAULT_DOMAIN = "";
 const DEFAULT_KEYWORDS = [];
 const DEFAULT_KNOWLEDGE_FILES = [];
 const DEFAULT_MODEL_PROVIDER = "openai";
+
+const formatFileSize = (size) => {
+  const bytes = Number(size || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "web";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 const loadSettings = () => {
   try {
@@ -24,7 +35,9 @@ const loadSettings = () => {
     return {
       domain: parsed.domain || DEFAULT_DOMAIN,
       keywords: Array.isArray(parsed.keywords) ? parsed.keywords : DEFAULT_KEYWORDS,
-      knowledgeFiles: Array.isArray(parsed.knowledgeFiles) ? parsed.knowledgeFiles : DEFAULT_KNOWLEDGE_FILES,
+      knowledgeFiles: Array.isArray(parsed.knowledgeFiles)
+        ? parsed.knowledgeFiles.map((item) => normalizeKnowledgeSource(item)).filter(Boolean)
+        : DEFAULT_KNOWLEDGE_FILES,
       modelProvider: parsed.modelProvider || DEFAULT_MODEL_PROVIDER
     };
   } catch {
@@ -40,17 +53,38 @@ const loadSettings = () => {
 export default function SettingsView({ setView, settingsTab, setSettingsTab, aiTone, setAiTone }) {
   const initial = loadSettings();
   const availableModels = getAvailableModels();
+  const knowledgeInputRef = useRef(null);
   const [domain, setDomain] = useState(initial.domain);
   const [savedDomain, setSavedDomain] = useState(initial.domain);
   const [newUrl, setNewUrl] = useState("");
   const [knowledgeFiles, setKnowledgeFiles] = useState(initial.knowledgeFiles);
   const [modelProvider, setModelProvider] = useState(initial.modelProvider);
   const [saveState, setSaveState] = useState("idle");
+  const [knowledgeState, setKnowledgeState] = useState("idle");
+  const [knowledgeMessage, setKnowledgeMessage] = useState("");
   const [remoteHydrated, setRemoteHydrated] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
 
   const addUrl = () => {
-    if (newUrl.trim() && !knowledgeFiles.some(f => f.name === newUrl)) {
-      setKnowledgeFiles([{ name: newUrl, type: "url", size: "web", active: true }, ...knowledgeFiles]);
+    const url = newUrl.trim();
+    if (url && !knowledgeFiles.some((f) => (f.url || f.name) === url)) {
+      setKnowledgeFiles([
+        normalizeKnowledgeSource({
+          id: `url-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: url,
+          sourceType: "url",
+          kind: "link",
+          url,
+          size: "web",
+          sizeLabel: "web",
+          active: true,
+          status: "active",
+          summary: url,
+          promptContext: url,
+          uploadedAt: new Date().toISOString()
+        }),
+        ...knowledgeFiles
+      ]);
       setNewUrl("");
     }
   };
@@ -68,10 +102,94 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
     setKeywords(keywords.filter(x => x !== k));
   };
 
+  const removeKnowledgeSource = (index) => {
+    setKnowledgeFiles((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
   const persistSettings = async (payload) => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(payload));
     if (isSupabaseEnabled()) {
       await upsertSettingsToSupabase(payload);
+    }
+  };
+
+  const handleKnowledgeFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+
+    setKnowledgeState("saving");
+    setKnowledgeMessage(`Analyzing ${files.length} uploaded file${files.length > 1 ? "s" : ""}...`);
+
+    const added = [];
+    const failures = [];
+
+    for (const file of files) {
+      try {
+        const parsed = await parseMaterialFile(file);
+        const analysis = await analyzeMaterialWithOpenAI({
+          filename: file.name || "upload",
+          kind: parsed.kind || "file",
+          extractedText: parsed.extractedText || "",
+          parsedPreview: parsed.parsedPreview || null
+        });
+
+        added.push(normalizeKnowledgeSource({
+          id: `knowledge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name || "upload",
+          sourceType: "file",
+          kind: parsed.kind || "file",
+          mimeType: file.type || "",
+          size: file.size || 0,
+          sizeLabel: formatFileSize(file.size),
+          active: true,
+          status: "active",
+          summary: analysis.summary,
+          details: analysis.details,
+          tags: analysis.tags,
+          suggestedActions: analysis.suggestedActions,
+          promptContext: analysis.promptContext,
+          extractedText: parsed.extractedText || "",
+          parsedPreview: parsed.parsedPreview || null,
+          uploadedAt: new Date().toISOString()
+        }));
+      } catch (err) {
+        failures.push(`${file.name || "upload"}: ${err instanceof Error ? err.message : "解析失败"}`);
+      }
+    }
+
+    if (added.length > 0) {
+      setKnowledgeFiles((prev) => [...added, ...prev]);
+      setKnowledgeMessage(`Saved ${added.length} knowledge file${added.length > 1 ? "s" : ""}.`);
+    }
+
+    if (failures.length > 0) {
+      console.error("[Knowledge] 文件解析失败:", failures);
+    }
+
+    if (added.length > 0 && failures.length === 0) {
+      setKnowledgeState("saved");
+    } else if (added.length > 0 && failures.length > 0) {
+      setKnowledgeState("saved");
+      setKnowledgeMessage(`${added.length} file(s) saved, ${failures.length} failed.`);
+    } else if (failures.length > 0) {
+      setKnowledgeState("error");
+      setKnowledgeMessage(failures[0]);
+    } else {
+      setKnowledgeState("idle");
+    }
+
+    window.setTimeout(() => {
+      setKnowledgeState("idle");
+      setKnowledgeMessage("");
+    }, 1800);
+  };
+
+  const onKnowledgeDrop = async (event) => {
+    event.preventDefault();
+    setDropActive(false);
+    const files = event.dataTransfer?.files;
+    if (files && files.length) {
+      await handleKnowledgeFiles(files);
     }
   };
 
@@ -111,7 +229,9 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
           setDomain(remote.domain || "");
           setSavedDomain(remote.domain || "");
           setKeywords(Array.isArray(remote.keywords) ? remote.keywords : []);
-          setKnowledgeFiles(Array.isArray(remote.knowledgeFiles) ? remote.knowledgeFiles : []);
+          setKnowledgeFiles(Array.isArray(remote.knowledgeFiles)
+            ? remote.knowledgeFiles.map((item) => normalizeKnowledgeSource(item)).filter(Boolean)
+            : []);
           if (remote.modelProvider) {
             setModelProvider(remote.modelProvider);
           }
@@ -155,6 +275,7 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
   }, [saveState]);
 
   const domainDirty = domain.trim() !== savedDomain.trim();
+  const activeKnowledgeCount = knowledgeFiles.filter((item) => item?.active !== false).length;
   const handleSelectModelProvider = (providerId) => {
     if (!availableModels.some((model) => model.id === providerId && model.configured)) return;
     setModelProvider(providerId);
@@ -243,16 +364,36 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
           
           <div className="settings-knowledge-header">
              <div className="section-label">DOMAIN KNOWLEDGE BASE</div>
-             <div className="settings-sources-count">{knowledgeFiles.length} SOURCES ACTIVE</div>
+             <div className={`settings-sources-count ${knowledgeState}`} title={knowledgeMessage}>{activeKnowledgeCount} SOURCES ACTIVE</div>
           </div>
           
           {/* File Upload Dropzone */}
-          <div className="settings-dropzone" onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.02)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+          <input
+            ref={knowledgeInputRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
+            multiple
+            onChange={(e) => {
+              void handleKnowledgeFiles(e.target.files);
+              e.target.value = "";
+            }}
+            style={{ display: "none" }}
+          />
+          <div
+            className={`settings-dropzone ${dropActive ? "active" : ""}`}
+            onClick={() => knowledgeInputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDropActive(true); }}
+            onDragLeave={() => setDropActive(false)}
+            onDrop={onKnowledgeDrop}
+          >
              <div className="settings-dropzone-icon">
                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
              </div>
-             <div className="settings-dropzone-title">Upload Files</div>
-             <div className="settings-dropzone-desc">Drop PDFs, DOCs, images or firm spreadsheets here. Internal engine auto-indexes content.</div>
+             <div className="settings-dropzone-title">Upload Knowledge Files</div>
+             <div className="settings-dropzone-desc">Drop PDFs, Word docs, Excel sheets, or CSV files here. The app will extract text and make it available to the agent every round.</div>
+             {knowledgeState !== "idle" && (
+               <div className={`settings-knowledge-status ${knowledgeState}`}>{knowledgeMessage || "Analyzing uploaded file..."}</div>
+             )}
           </div>
 
           {/* URL Input */}
@@ -267,15 +408,24 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
             {knowledgeFiles.length === 0 ? <div className="settings-no-sources">No sources uploaded yet.</div> : knowledgeFiles.map((f, i) => (
               <div key={i} className="settings-source-item">
                 <div className="settings-source-left">
-                  <div className={`settings-source-icon ${f.type === 'url' ? 'settings-source-icon-url' : 'settings-source-icon-file'}`}>
-                    {f.type === 'url' ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>}
+                  <div className={`settings-source-icon ${f.sourceType === 'url' ? 'settings-source-icon-url' : 'settings-source-icon-file'}`}>
+                    {f.sourceType === 'url' ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>}
                   </div>
                   <div className="settings-source-info">
                     <div className="settings-source-name">{f.name}</div>
-                    <div className="settings-source-meta">{f.size} {f.active && <span className="settings-source-synced">• Synced</span>}</div>
+                    <div className="settings-source-meta">
+                      {f.sourceType === "url" ? (f.url || f.name) : `${f.kind || "file"} • ${f.sizeLabel || formatFileSize(f.size)}`}
+                      {f.active !== false && <span className="settings-source-synced">• Synced</span>}
+                    </div>
+                    <div className="settings-source-summary">{f.summary || f.promptContext || "No summary available yet."}</div>
+                    {Array.isArray(f.tags) && f.tags.length > 0 && (
+                      <div className="settings-source-tags">
+                        {f.tags.slice(0, 3).map((tag) => <span key={tag} className="settings-source-tag">{tag}</span>)}
+                      </div>
+                    )}
                   </div>
                 </div>
-                <button onClick={() => { setKnowledgeFiles(p => p.filter((_, idx) => idx !== i)) }} className="settings-source-remove">✕</button>
+                <button onClick={() => removeKnowledgeSource(i)} className="settings-source-remove">✕</button>
               </div>
             ))}
           </div>
