@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { isSupabaseEnabled, loadSettingsFromSupabase, upsertSettingsToSupabase } from "../lib/supabaseClient";
+import { getAvailableModels } from "../lib/models";
 
 const SETTINGS_KEY = "crm.settings.v1";
 
 const DEFAULT_DOMAIN = "";
 const DEFAULT_KEYWORDS = [];
 const DEFAULT_KNOWLEDGE_FILES = [];
+const DEFAULT_MODEL_PROVIDER = "openai";
 
 const loadSettings = () => {
   try {
@@ -14,30 +16,35 @@ const loadSettings = () => {
       return {
         domain: DEFAULT_DOMAIN,
         keywords: DEFAULT_KEYWORDS,
-        knowledgeFiles: DEFAULT_KNOWLEDGE_FILES
+        knowledgeFiles: DEFAULT_KNOWLEDGE_FILES,
+        modelProvider: DEFAULT_MODEL_PROVIDER
       };
     }
     const parsed = JSON.parse(raw);
     return {
       domain: parsed.domain || DEFAULT_DOMAIN,
       keywords: Array.isArray(parsed.keywords) ? parsed.keywords : DEFAULT_KEYWORDS,
-      knowledgeFiles: Array.isArray(parsed.knowledgeFiles) ? parsed.knowledgeFiles : DEFAULT_KNOWLEDGE_FILES
+      knowledgeFiles: Array.isArray(parsed.knowledgeFiles) ? parsed.knowledgeFiles : DEFAULT_KNOWLEDGE_FILES,
+      modelProvider: parsed.modelProvider || DEFAULT_MODEL_PROVIDER
     };
   } catch {
     return {
       domain: DEFAULT_DOMAIN,
       keywords: DEFAULT_KEYWORDS,
-      knowledgeFiles: DEFAULT_KNOWLEDGE_FILES
+      knowledgeFiles: DEFAULT_KNOWLEDGE_FILES,
+      modelProvider: DEFAULT_MODEL_PROVIDER
     };
   }
 };
 
 export default function SettingsView({ setView, settingsTab, setSettingsTab, aiTone, setAiTone }) {
   const initial = loadSettings();
+  const availableModels = getAvailableModels();
   const [domain, setDomain] = useState(initial.domain);
   const [savedDomain, setSavedDomain] = useState(initial.domain);
   const [newUrl, setNewUrl] = useState("");
   const [knowledgeFiles, setKnowledgeFiles] = useState(initial.knowledgeFiles);
+  const [modelProvider, setModelProvider] = useState(initial.modelProvider);
   const [saveState, setSaveState] = useState("idle");
   const [remoteHydrated, setRemoteHydrated] = useState(false);
 
@@ -73,7 +80,8 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
     const payload = {
       domain: nextDomain,
       keywords,
-      knowledgeFiles
+      knowledgeFiles,
+      modelProvider
     };
 
     setSaveState("saving");
@@ -104,6 +112,9 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
           setSavedDomain(remote.domain || "");
           setKeywords(Array.isArray(remote.keywords) ? remote.keywords : []);
           setKnowledgeFiles(Array.isArray(remote.knowledgeFiles) ? remote.knowledgeFiles : []);
+          if (remote.modelProvider) {
+            setModelProvider(remote.modelProvider);
+          }
         }
       } catch (err) {
         console.error("[Supabase] 加载 settings 失败:", err);
@@ -122,7 +133,8 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
     const payload = {
       domain: savedDomain.trim(),
       keywords,
-      knowledgeFiles
+      knowledgeFiles,
+      modelProvider
     };
 
     const timer = setTimeout(async () => {
@@ -134,7 +146,7 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [savedDomain, keywords, knowledgeFiles, remoteHydrated]);
+  }, [savedDomain, keywords, knowledgeFiles, modelProvider, remoteHydrated]);
 
   useEffect(() => {
     if (saveState !== "saved") return undefined;
@@ -143,6 +155,12 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
   }, [saveState]);
 
   const domainDirty = domain.trim() !== savedDomain.trim();
+  const handleSelectModelProvider = (providerId) => {
+    if (!availableModels.some((model) => model.id === providerId && model.configured)) return;
+    setModelProvider(providerId);
+    setSaveState("saving");
+    window.setTimeout(() => setSaveState("saved"), 50);
+  };
 
   return (
     <div className="page" style={{ background: "#faf9f7" }}>
@@ -175,6 +193,29 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
                 {saveState === "saving" ? "Saving..." : "Save"}
               </button>
             )}
+          </div>
+
+          <div className="section-label" style={{ marginBottom: 16, marginTop: 28 }}>MODEL PROVIDER</div>
+          <div className="settings-focus-desc">
+            Choose which configured model the main app and playground should use by default.
+          </div>
+          <div className="settings-keywords-wrap">
+            {availableModels.map((model) => {
+              const active = modelProvider === model.id;
+              return (
+                <button
+                  key={model.id}
+                  type="button"
+                  onClick={() => handleSelectModelProvider(model.id)}
+                  className={`trait-pill settings-model-pill ${active ? "active" : ""} ${model.configured ? "" : "disabled"}`}
+                  disabled={!model.configured}
+                >
+                  <span>{model.label}</span>
+                  {active && <span className="settings-model-pill-check">✓</span>}
+                  {!model.configured ? " (Not Configured)" : ""}
+                </button>
+              );
+            })}
           </div>
 
           <div className="section-label" style={{ marginBottom: 16 }}>STRATEGIC FOCUS KEYWORDS</div>

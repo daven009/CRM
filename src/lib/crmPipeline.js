@@ -87,6 +87,18 @@ const buildMaterialContext = (files = [], maxItems = DEFAULT_MATERIAL_LIMIT) => 
     parsedPreview: file.parsedPreview
   }));
 
+const buildTodoContext = (todos = [], maxItems = 12) => (Array.isArray(todos) ? todos : [])
+  .filter((todo) => !todo?.done)
+  .sort((a, b) => Number(a?.d || 0) - Number(b?.d || 0))
+  .slice(0, maxItems)
+  .map((todo) => ({
+    text: String(todo?.t || "").trim(),
+    days: Number.isFinite(Number(todo?.d)) ? Number(todo.d) : 0,
+    source: String(todo?.s || "").trim(),
+    done: Boolean(todo?.done)
+  }))
+  .filter((todo) => todo.text);
+
 const isPlainObject = (v) => Object.prototype.toString.call(v) === "[object Object]";
 
 const toPrettyJson = (v) => {
@@ -205,6 +217,7 @@ const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) 
   role: c.role,
   hp: c.hp,
   todoOpenCount: (c.todos || []).filter((t) => !t.done).length,
+  openTodos: buildTodoContext(c.todos, 6),
   materials: buildMaterialContext(c.files, 3).map((item) => item.promptContext || item.summary || item.name).filter(Boolean)
 }));
 
@@ -224,6 +237,8 @@ ${lockedClient
 - 若当前联系人存在资料文件（Data），你必须将这些资料视为强上下文，在分析需求、生成建议、起草话术、判断下一步动作时优先引用，不要忽略其中的数字、时间、金额、承诺、方案细节。
 - 若资料中同时存在 summary / promptContext / extractedTextExcerpt / parsedPreview，信息优先级应为：extractedTextExcerpt 和 parsedPreview > promptContext > details > summary。
 - 若摘要内容与原始抽取内容（extractedTextExcerpt / parsedPreview）不一致，必须以原始抽取内容为准，不要被旧摘要误导。
+- 若用户询问“待办 / tasks / follow-up / 下一步”，你必须只依据显式提供的待办字段回答，例如 todoOpenCount、openTodos、current_focus_client.open_todos。
+- 对于待办问题，禁止从资料文件、保单内容、聊天摘要、traits 或其他上下文中推断或臆造待办事项；如果待办字段不足以支撑“列出全部待办”，必须明确说明你只能根据当前提供的待办字段回答。
 - 为控制篇幅，某些上下文集合可能只会提供一个子集，并通过对应的 *_meta 字段告诉你：总量 totalCount、当前注入数量 includedCount、是否截断 truncated、默认上限 defaultLimit。
 - 通用规则：当任意上下文集合的 meta.truncated = true 时，你必须始终区分“全集总量”和“当前注入子集”，绝对不能把当前注入数量误说成全集总量。
 - 如果用户询问数量、要求枚举、要求汇总、要求“全部展示/完整内容/所有项目”，而相关上下文集合存在 meta.truncated = true：
@@ -320,6 +335,7 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
   const materialLimit = Number.isFinite(Number(options?.materialLimit)) ? Number(options.materialLimit) : DEFAULT_MATERIAL_LIMIT;
   const systemPrompt = buildSystemPrompt({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit });
   const lockedClientMaterials = lockedClient ? buildMaterialContext(lockedClient.files, materialLimit) : [];
+  const lockedClientTodos = lockedClient ? buildTodoContext(lockedClient.todos, 20) : [];
 
   const normalizedHistory = (conversationHistory || [])
     .filter((turn) => turn?.userText)
@@ -360,6 +376,8 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
         company: lockedClient.co,
         role: lockedClient.role,
         hp: lockedClient.hp,
+        todo_open_count: (lockedClient.todos || []).filter((todo) => !todo?.done).length,
+        open_todos: lockedClientTodos,
         materials: lockedClientMaterials,
         materials_total_count: Array.isArray(lockedClient.files) ? lockedClient.files.length : 0,
         materials_truncated: Array.isArray(lockedClient.files) ? lockedClient.files.length > materialLimit : false

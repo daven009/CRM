@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { getAvailableModels } from "../lib/models/index.js";
 import { buildCrmPromptContext, runCrmPipeline } from "../lib/crmPipeline.js";
+import { resolveModelProviderPreference } from "../lib/modelSettings.js";
 
 /*
  * =========================================================
@@ -906,7 +907,7 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
   const [showFullPrompt, setShowFullPrompt] = useState(false);
   const availableModels = getAvailableModels();
   const firstConfiguredModel = availableModels.find((m) => m.configured)?.id || "minimax";
-  const [selectedModel, setSelectedModel] = useState(firstConfiguredModel);
+  const [selectedModel, setSelectedModel] = useState(resolveModelProviderPreference());
 
   const chatEndRef = useRef(null);
 
@@ -919,6 +920,13 @@ export default function PlaygroundView({ setView, clients, applyPlaygroundAction
       setSelectedModel(firstConfiguredModel);
     }
   }, [availableModels, firstConfiguredModel, selectedModel]);
+
+  useEffect(() => {
+    const preferred = resolveModelProviderPreference();
+    if (availableModels.some((m) => m.id === preferred && m.configured) && preferred !== selectedModel) {
+      setSelectedModel(preferred);
+    }
+  }, [availableModels, selectedModel]);
 
   const currentTurn = selectedTurn != null
     ? chatHistory[selectedTurn]

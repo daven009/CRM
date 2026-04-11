@@ -12,9 +12,9 @@ import { applyClientAction } from "./lib/clientMutations";
 import { analyzeScreenshotWithOpenAI } from "./lib/models/openaiVision";
 import { summarizeConversationWithOpenAI } from "./lib/models/openaiSummary";
 import { analyzeMaterialWithOpenAI } from "./lib/models/openaiMaterial";
-import { getAvailableModels } from "./lib/models/index.js";
 import { runCrmPipeline } from "./lib/crmPipeline";
 import { parseMaterialFile } from "./lib/materialParsers";
+import { resolveModelProviderPreference } from "./lib/modelSettings";
 
 const CLIENTS_KEY = "crm.clients.v1";
 const HISTORY_KEY = "crm.history.v1";
@@ -53,7 +53,7 @@ const clipText = (value, max = 28) => {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 };
 
-const getDefaultModelProvider = () => getAvailableModels().find((m) => m.configured)?.id || "openai";
+const getDefaultModelProvider = () => resolveModelProviderPreference();
 
 const toTurnHistory = (messages = []) => {
   const turns = [];

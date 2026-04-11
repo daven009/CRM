@@ -120,7 +120,8 @@ export const loadSettingsFromSupabase = async () => {
   return {
     domain: String(data.domain || "").trim(),
     keywords: normalizeArray(data.keywords).map((v) => String(v || "").trim()).filter(Boolean),
-    knowledgeFiles: normalizeArray(data.knowledge_files)
+    knowledgeFiles: normalizeArray(data.knowledge_files),
+    modelProvider: String(data.model_provider || "").trim()
   };
 };
 
@@ -133,6 +134,7 @@ export const upsertSettingsToSupabase = async (settings = {}) => {
     domain: String(settings.domain || "").trim(),
     keywords: normalizeArray(settings.keywords).map((v) => String(v || "").trim()).filter(Boolean),
     knowledge_files: normalizeArray(settings.knowledgeFiles),
+    model_provider: String(settings.modelProvider || "").trim(),
     updated_at: new Date().toISOString()
   };
 

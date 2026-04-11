@@ -10,6 +10,7 @@ import { fuzzySearchClients, heuristicMatch, buildClarifyQuestion, toResolvedCli
 import { expandEventChain, EVENT_CHAINS } from "../lib/router/eventChains.js";
 import { createLLMCaller, getAvailableModels, extractTextFromModelResponse } from "../lib/models/index.js";
 import ReactMarkdown from "react-markdown";
+import { resolveModelProviderPreference } from "../lib/modelSettings.js";
 
 /*
  * =========================================================
@@ -1160,7 +1161,7 @@ export default function PlaygroundView2({ setView, clients, applyPlaygroundActio
   const [pendingClarification, setPendingClarification] = useState(null);
 
   // 模型选择：支持运行时切换不同 LLM provider
-  const [selectedModel, setSelectedModel] = useState("minimax");
+  const [selectedModel, setSelectedModel] = useState(resolveModelProviderPreference());
   const availableModels = getAvailableModels();
 
   const chatEndRef = useRef(null);
@@ -1168,6 +1169,13 @@ export default function PlaygroundView2({ setView, clients, applyPlaygroundActio
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, running]);
+
+  useEffect(() => {
+    const preferred = resolveModelProviderPreference();
+    if (availableModels.some((m) => m.id === preferred && m.configured) && preferred !== selectedModel) {
+      setSelectedModel(preferred);
+    }
+  }, [availableModels, selectedModel]);
 
   const currentTurn = selectedTurn != null
     ? chatHistory[selectedTurn]
