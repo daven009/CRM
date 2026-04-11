@@ -277,26 +277,32 @@ export default function App() {
       setConvos([...t.convos]);
     } else {
       setConvos([]);
-      setTimeout(() => sendMsg(`帮我处理${cc?.n}的${todoTx}`), 20);
+      setTimeout(() => sendMsg(`${cc?.n} - ${todoTx}`), 20);
     }
   };
 
   const markDone = (clientId, todoTx) => {
-    setClients(prev => prev.map(c => {
-      if (c.id !== clientId) return c;
-      const todos = (c.todos || []).map(td => {
-        if (td.t !== todoTx) return td;
-        return {
-          ...td,
-          done: true,
-          ...(activeTask && activeTask.todo === todoTx ? { convos: [...convos] } : {})
-        };
+    setClients(prev => {
+      const next = prev.map(c => {
+        if (c.id !== clientId) return c;
+        const todos = (c.todos || []).map(td => {
+          if (td.t !== todoTx) return td;
+          return {
+            ...td,
+            done: true,
+            ...(activeTask && activeTask.todo === todoTx ? { convos: [...convos] } : {})
+          };
+        });
+        const d = new Date();
+        const today = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+        const log = [{ dt: today, src: "系统", tx: `标记待办「${todoTx.slice(0, 8)}...」完成`, ai: null }, ...(c.log || [])];
+        return { ...c, todos, log };
       });
-      const d = new Date();
-      const today = `${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
-      const log = [{ dt: today, src: "系统", tx: `标记待办「${todoTx.slice(0, 8)}...」完成`, ai: null }, ...(c.log || [])];
-      return { ...c, todos, log };
-    }));
+      // 显式持久化更新后的 client
+      const changed = next.find(c => c.id === clientId);
+      if (changed) persistUpserts([changed]);
+      return next;
+    });
 
     if (activeTask && activeTask.todo === todoTx) {
       setConvos([]);
@@ -306,8 +312,8 @@ export default function App() {
         if (p.length === 0) return p;
         const next = [...p];
         const last = next[next.length - 1];
-        if (last?.action?.type === "mark_done" && last.action.client === clientId && last.action.todo === todoTx) {
-          next[next.length - 1] = { ...last, action: null };
+        if (last && Array.isArray(last.actions) && last.actions.some(a => a.type === "complete_todo" && a.clientId === clientId)) {
+          next[next.length - 1] = { ...last, actions: [] };
         }
         return next;
       });

@@ -38,6 +38,24 @@ export default function DetailView({
   const [editingFileIndex, setEditingFileIndex] = React.useState(null);
   const [editingFileSummary, setEditingFileSummary] = React.useState("");
   const [deletingFileIndex, setDeletingFileIndex] = React.useState(null);
+  const [traitsEditing, setTraitsEditing] = React.useState(false);
+  const traitPressTimer = React.useRef(null);
+  const traitsWrapRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!traitsEditing) return;
+    const handleClickOutside = (e) => {
+      if (traitsWrapRef.current && !traitsWrapRef.current.contains(e.target)) {
+        setTraitsEditing(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [traitsEditing]);
   const screenshotInputRef = React.useRef(null);
   const logPressTimerRef = React.useRef(null);
   const filePressTimerRef = React.useRef(null);
@@ -253,8 +271,30 @@ export default function DetailView({
 
         {/* ── 3. Traits ── */}
         <div className="detail-traits">
-          <div className="traits-wrap">
-            {sel.traits.map((tr, i) => <span key={i} className="trait-pill" style={{ animation: `slideIn 0.3s ease ${i * 0.04}s both` }}>{tr}</span>)}
+          <div
+            className="traits-wrap"
+            ref={traitsWrapRef}
+            onMouseDown={() => { traitPressTimer.current = setTimeout(() => setTraitsEditing(true), 500); }}
+            onMouseUp={() => clearTimeout(traitPressTimer.current)}
+            onMouseLeave={() => clearTimeout(traitPressTimer.current)}
+            onTouchStart={() => { traitPressTimer.current = setTimeout(() => setTraitsEditing(true), 500); }}
+            onTouchEnd={() => clearTimeout(traitPressTimer.current)}
+          >
+            {sel.traits.map((tr, i) => (
+              <span key={i} className={`trait-pill ${traitsEditing ? "trait-pill-editing" : ""}`} style={traitsEditing ? { animation: `wobble 0.25s ease-in-out ${i * 0.05}s infinite alternate` } : { animation: `slideIn 0.3s ease ${i * 0.04}s both` }}>
+                {tr}
+                {traitsEditing && (
+                  <span
+                    className="trait-delete-badge"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const nextTraits = sel.traits.filter((_, idx) => idx !== i);
+                      commitClientUpdate({ ...sel, traits: nextTraits });
+                    }}
+                  >−</span>
+                )}
+              </span>
+            ))}
           </div>
         </div>
 

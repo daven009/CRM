@@ -164,16 +164,6 @@ export const EVENT_CHAINS = {
     recommendedScripts: ['recovery_congrats']
   },
 
-  birthday_milestone: {
-    todos: [
-      { todo: '发送生日祝福消息', daysOffset: 0 },
-      { todo: '生日当天送小礼物或贺卡', daysOffset: 0 },
-      { todo: '一周后约见面聊近况，评估新阶段保障需求', daysOffset: 7 }
-    ],
-    traits: [],
-    recommendedScripts: ['birthday_wishes']
-  },
-
   anniversary: {
     todos: [
       { todo: '发送周年纪念祝福消息', daysOffset: 0 },

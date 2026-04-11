@@ -93,7 +93,9 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .meta-ps { font-size: 11px; color: #666; }
 .detail-traits { margin-bottom: 24px; animation: fadeUp 0.4s ease 0.1s both; }
 .traits-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
-.trait-pill { font-size: 12px; padding: 5px 10px; border-radius: 20px; background: rgba(0,0,0,0.03); color: #555; }
+.trait-pill { font-size: 12px; padding: 5px 10px; border-radius: 20px; background: rgba(0,0,0,0.03); color: #555; position: relative; }
+.trait-pill-editing { padding-right: 14px; }
+.trait-delete-badge { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #c0392b; color: #fff; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; cursor: pointer; line-height: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
 .detail-todos-section { margin-bottom: 24px; animation: fadeUp 0.4s ease 0.15s both; }
 .todo-item { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid rgba(0,0,0,0.04); cursor: pointer; }
 .todo-circle { width: 16px; height: 16px; border-radius: 8px; flex-shrink: 0; }
@@ -377,6 +379,7 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 @keyframes recording { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15); } }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes wobble { 0% { transform: rotate(-1.5deg) scale(1.02); } 100% { transform: rotate(1.5deg) scale(1.02); } }
 
 /* ── PLAYGROUND VIEW ── */
 .playground-back-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

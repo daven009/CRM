@@ -307,7 +307,14 @@ ${toPrettyJson(ACTION_SCHEMA)}
 - complete_todo：将已存在的待办标记为已完成。
 - update_todo：修改已有待办的内容、时间、优先级等字段。
 - delete_todo：删除一条待办任务（不是完成，而是作废）。
-- update_profile：更新客户的基础档案字段（姓名、电话、地址、职业、生日等结构化信息）。
+- update_profile：更新客户的基础档案字段。updates 对象的 key 必须使用以下缩写：
+  - "bd"：生日（格式：YYYY.MM.DD，如 "1993.03.22"）
+  - "co"：公司名
+  - "role"：职位/职业
+  - "tel"：电话号码
+  - "ps"：性格/备注
+  - "n"：姓名
+  示例: { "type": "update_profile", "clientId": 1, "updates": { "bd": "1993.03.22", "tel": "13800138000" } }
 - add_relation：在客户之间建立关系链接（家庭、同事、转介绍等）。
 - create_profile：新建一个客户档案。
 - trigger_event_chain：触发一个预设的事件链或自动化流程。

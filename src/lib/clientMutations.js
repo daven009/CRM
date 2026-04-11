@@ -26,10 +26,41 @@ export const createClientDraft = ({ id, name, company = "", source = "手动添�
   gifts: []
 });
 
-const pickProfileChanges = (client, updates = {}) => {
+const PROFILE_FIELD_ALIASES = {
+  co: ["co", "company", "公司", "corp", "organization"],
+  role: ["role", "title", "职位", "职业", "position", "job", "job_title"],
+  bd: ["bd", "birthday", "生日", "birth", "birth_date", "birthdate", "dob", "date_of_birth"],
+  ps: ["ps", "personality", "性格", "persona", "character", "note", "备注"],
+  tel: ["tel", "phone", "电话", "telephone", "mobile", "手机", "phone_number"],
+  n: ["n", "name", "姓名", "名字", "client_name"],
+};
+
+const resolveUpdates = (raw = {}) => {
+  const resolved = {};
+  const entries = Object.entries(raw);
+
+  for (const [canonical, aliases] of Object.entries(PROFILE_FIELD_ALIASES)) {
+    for (const [key, value] of entries) {
+      if (value === undefined || value === null) continue;
+      if (aliases.includes(key) || aliases.includes(key.toLowerCase())) {
+        resolved[canonical] = String(value).trim();
+        break;
+      }
+    }
+  }
+
+  return resolved;
+};
+
+const pickProfileChanges = (client, rawUpdates = {}) => {
+  const updates = resolveUpdates(rawUpdates);
   const next = { ...client };
   const changed = [];
 
+  if (updates.n !== undefined && updates.n !== client.n) {
+    next.n = updates.n;
+    changed.push("姓名");
+  }
   if (updates.co !== undefined && updates.co !== client.co) {
     next.co = updates.co;
     changed.push("公司");

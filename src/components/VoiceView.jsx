@@ -24,25 +24,28 @@ export default function VoiceView({
     }
   }, [contactCard, updateCard]);
 
-  // Check if the latest AI message has inline actions
+  // Check if the latest AI message has inline actions (from actions array)
   useEffect(() => {
     if (convos.length > 0) {
       const last = convos[convos.length - 1];
-      if (last.r === "ai" && last.action?.type === "new_contact" && !contactCard) {
+      if (last.r !== "ai" || !Array.isArray(last.actions)) return;
+      const createAction = last.actions.find(a => a.type === "create_profile");
+      if (createAction && !contactCard) {
         setContactCard({
-          name: last.action.name,
-          company: last.action.company || "",
+          name: createAction.name || "",
+          company: createAction.company || "",
           msgIndex: convos.length - 1
         });
       }
-      if (last.r === "ai" && last.action?.type === "update_contact" && !updateCard) {
+      const updateAction = last.actions.find(a => a.type === "update_profile");
+      if (updateAction && !updateCard) {
         setUpdateCard({
-          clientId: last.action.clientId,
-          co: last.action.updates?.co || "",
-          role: last.action.updates?.role || "",
-          tel: last.action.updates?.tel || "",
-          bd: last.action.updates?.bd || "",
-          ps: last.action.updates?.ps || "",
+          clientId: updateAction.clientId,
+          co: updateAction.updates?.co || "",
+          role: updateAction.updates?.role || "",
+          tel: updateAction.updates?.tel || "",
+          bd: updateAction.updates?.bd || "",
+          ps: updateAction.updates?.ps || "",
           msgIndex: convos.length - 1
         });
       }
@@ -51,14 +54,14 @@ export default function VoiceView({
 
   const confirmContact = () => {
     if (!contactCard || !contactCard.name.trim()) return;
-    const created = addContact(contactCard.name.trim(), contactCard.company.trim());
-    // Replace the AI message with a confirmation
+    // create_profile 已被自动执行，这里用编辑后的值更新已创建的客户
+    // addContact 仍然可以安全调用——如果名字一样会创建新的，所以我们只替换消息文本
     setConvos(p => {
       const next = [...p];
       next[contactCard.msgIndex] = {
         ...next[contactCard.msgIndex],
-        t: `✅ 已成功创建联系人「${created.n}」${created.co !== "Unknown" ? ` — ${created.co}` : ""}。你可以在 Cards 列表中找到他/她。`,
-        action: null
+        t: `✅ 已创建联系人「${contactCard.name.trim()}」${contactCard.company.trim() ? ` — ${contactCard.company.trim()}` : ""}。`,
+        actions: []
       };
       return next;
     });
@@ -71,8 +74,7 @@ export default function VoiceView({
       if (contactCard) {
         next[contactCard.msgIndex] = {
           ...next[contactCard.msgIndex],
-          t: "好的，已取消创建。",
-          action: null
+          actions: []
         };
       }
       return next;
@@ -82,7 +84,8 @@ export default function VoiceView({
 
   const confirmUpdate = () => {
     if (!updateCard) return;
-    const updated = updateContact(updateCard.clientId, {
+    // update_profile 已被自动执行，用卡片上编辑后的值再更新一次（覆盖）
+    updateContact(updateCard.clientId, {
       co: updateCard.co.trim(),
       role: updateCard.role.trim(),
       tel: updateCard.tel.trim(),
@@ -93,8 +96,8 @@ export default function VoiceView({
       const next = [...p];
       next[updateCard.msgIndex] = {
         ...next[updateCard.msgIndex],
-        t: updated ? `✅ 已更新${updated.n}的资料（公司、职位、电话、生日、性格）。` : "未找到该联系人，更新失败。",
-        action: null
+        t: `✅ 已更新联系人资料。`,
+        actions: []
       };
       return next;
     });
@@ -107,8 +110,7 @@ export default function VoiceView({
       if (updateCard) {
         next[updateCard.msgIndex] = {
           ...next[updateCard.msgIndex],
-          t: "好的，已取消修改。",
-          action: null
+          actions: []
         };
       }
       return next;
@@ -152,7 +154,7 @@ export default function VoiceView({
           </div>
           
           {/* Inline Editable Contact Card - rendered as separate block */}
-          {c.r === "ai" && c.action?.type === "new_contact" && contactCard && contactCard.msgIndex === i && (
+          {c.r === "ai" && Array.isArray(c.actions) && c.actions.some(a => a.type === "create_profile") && contactCard && contactCard.msgIndex === i && (
             <div className="contact-card-wrapper">
               <div className="contact-card">
                 <div className="contact-card-title">NEW CONTACT</div>
@@ -185,7 +187,7 @@ export default function VoiceView({
             </div>
           )}
 
-          {c.r === "ai" && c.action?.type === "update_contact" && updateCard && updateCard.msgIndex === i && (
+          {c.r === "ai" && Array.isArray(c.actions) && c.actions.some(a => a.type === "update_profile") && updateCard && updateCard.msgIndex === i && (
             <div className="contact-card-wrapper">
               <div className="contact-card">
                 <div className="contact-card-title">UPDATE CONTACT</div>
@@ -248,12 +250,19 @@ export default function VoiceView({
         {aiTyping && <div className="typing-indicator"><div className="typing-box">{[0, 1, 2].map(i => <div key={i} className="dot" />)}</div></div>}
         
         {/* Contextual Action Pill */}
-        {!aiTyping && (activeTask || (convos.length > 0 && convos[convos.length - 1].action?.type === "mark_done")) && (
+        {!aiTyping && (activeTask || (() => {
+          const last = convos.length > 0 ? convos[convos.length - 1] : null;
+          return last && Array.isArray(last.actions) && last.actions.some(a => a.type === "complete_todo");
+        })()) && (
           <div className="action-pill-wrapper">
             <button 
               onClick={() => {
                 if (activeTask) markDone(activeTask.client, activeTask.todo);
-                else markDone(convos[convos.length - 1].action.client, convos[convos.length - 1].action.todo);
+                else {
+                  const last = convos[convos.length - 1];
+                  const doneAction = last?.actions?.find(a => a.type === "complete_todo");
+                  if (doneAction) markDone(doneAction.clientId, doneAction.todo);
+                }
               }} 
               className="action-pill-btn"
             >
