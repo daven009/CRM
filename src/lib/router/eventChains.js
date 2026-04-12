@@ -171,6 +171,17 @@ export const EVENT_CHAINS = {
     ],
     traits: [],
     recommendedScripts: ['anniversary_wishes']
+  },
+
+  birthday_milestone: {
+    todos: [
+      { todo: '发送整数大寿祝福消息（附赠小礼物或贺卡）', daysOffset: 0 },
+      { todo: '生日当天电话问候，表达重视', daysOffset: 0 },
+      { todo: '一周后回访，了解近况和保障需求变化', daysOffset: 7 },
+      { todo: '一个月后评估是否需要调整保障方案（年龄节点费率变化）', daysOffset: 30 }
+    ],
+    traits: ['整数大寿'],
+    recommendedScripts: ['birthday_milestone_wishes', 'age_milestone_review']
   }
 };
 

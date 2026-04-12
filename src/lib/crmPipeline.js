@@ -1,14 +1,15 @@
 import { createLLMCaller, extractTextFromModelResponse } from "./models/index.js";
 import { buildKnowledgeContext, normalizeKnowledgeSource } from "./knowledgeSources.js";
+import { retrieveRelevantKnowledge } from "./knowledgeEmbedding.js";
 
-const ACTION_WHITELIST = [
+export const ACTION_WHITELIST = [
   "add_trait", "remove_trait",
   "add_todo", "complete_todo", "update_todo", "delete_todo",
   "update_profile", "add_relation", "create_profile",
   "trigger_event_chain"
 ];
 
-const ACTION_SCHEMA = {
+export const ACTION_SCHEMA = {
   add_trait: ["clientId", "trait"],
   remove_trait: ["clientId", "trait"],
   add_todo: ["clientId", "todo", "days"],
@@ -25,20 +26,20 @@ const ACTION_SCHEMA = {
   archive_conversation: ["summary", "messages"]
 };
 
-const INTENT_TYPES = ["RECORD", "COMMAND", "QUERY", "KNOWLEDGE", "GENERATE", "RECOMMEND", "CHAT"];
+export const INTENT_TYPES = ["RECORD", "COMMAND", "QUERY", "KNOWLEDGE", "GENERATE", "RECOMMEND", "CHAT"];
 
-const LIMITS = {
+export const LIMITS = {
   MAX_ACTIONS: 30,
   MAX_INTENTS: 12,
   MAX_REPAIR_ROUNDS: 2,
-  MAX_TOTAL_LLM_CALLS: 4
+  MAX_TOTAL_LLM_CALLS: 6
 };
 
 const SETTINGS_KEY = "crm.settings.v1";
 const DEFAULT_MATERIAL_LIMIT = 5;
 const MATERIAL_EXCERPT_LIMIT = 24000;
 
-const clipText = (value, max = 220) => {
+export const clipText = (value, max = 220) => {
   const text = String(value || "").trim();
   if (!text) return "";
   return text.length > max ? `${text.slice(0, max)}…` : text;
@@ -71,7 +72,7 @@ const normalizeMaterialEntry = (value) => {
   };
 };
 
-const buildMaterialContext = (files = [], maxItems = DEFAULT_MATERIAL_LIMIT) => (Array.isArray(files) ? files : [])
+export const buildMaterialContext = (files = [], maxItems = DEFAULT_MATERIAL_LIMIT) => (Array.isArray(files) ? files : [])
   .slice(0, maxItems)
   .map(normalizeMaterialEntry)
   .map((file, index) => ({
@@ -87,7 +88,7 @@ const buildMaterialContext = (files = [], maxItems = DEFAULT_MATERIAL_LIMIT) => 
     parsedPreview: file.parsedPreview
   }));
 
-const buildTodoContext = (todos = [], maxItems = 12) => (Array.isArray(todos) ? todos : [])
+export const buildTodoContext = (todos = [], maxItems = 12) => (Array.isArray(todos) ? todos : [])
   .filter((todo) => !todo?.done)
   .sort((a, b) => Number(a?.d || 0) - Number(b?.d || 0))
   .slice(0, maxItems)
@@ -109,7 +110,7 @@ const toPrettyJson = (v) => {
   }
 };
 
-const loadUserIntelligence = () => {
+export const loadUserIntelligence = () => {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return { domain: "", keywords: [], knowledgeFiles: [] };
@@ -181,7 +182,7 @@ const scorePayloadShape = (obj) => {
   return score;
 };
 
-const parseJsonFromText = (raw) => {
+export const parseJsonFromText = (raw) => {
   const text = String(raw || "").trim();
   if (!text) return null;
 
@@ -213,7 +214,7 @@ const parseJsonFromText = (raw) => {
   return best;
 };
 
-const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) => ({
+export const buildClientBrief = (clients = []) => (clients || []).slice(0, 30).map((c) => ({
   id: c.id,
   name: c.n,
   company: c.co,
@@ -358,7 +359,8 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
   const { domain, keywords, knowledgeFiles } = loadUserIntelligence();
   const lockedClient = options?.lockedClient || null;
   const materialLimit = Number.isFinite(Number(options?.materialLimit)) ? Number(options.materialLimit) : DEFAULT_MATERIAL_LIMIT;
-  const knowledgeContext = buildKnowledgeContext(knowledgeFiles);
+  // 优先使用预检索的知识上下文（语义检索结果），否则回退到旧的静态构建
+  const knowledgeContext = options?._preRetrievedKnowledge || buildKnowledgeContext(knowledgeFiles);
   const systemPrompt = buildSystemPrompt({ currentDate, currentYear, domain, keywords, lockedClient, materialLimit, knowledgeContext });
   const lockedClientMaterials = lockedClient ? buildMaterialContext(lockedClient.files, materialLimit) : [];
   const lockedClientTodos = lockedClient ? buildTodoContext(lockedClient.todos, 20) : [];
@@ -458,7 +460,7 @@ export const buildCrmPromptContext = (inputText, clients, conversationHistory = 
   };
 };
 
-const validateTopLevelPayload = (payload) => {
+export const validateTopLevelPayload = (payload) => {
   const errors = [];
   if (!isPlainObject(payload)) return { ok: false, errors: ["输出不是 JSON object"] };
   if (typeof payload.reply !== "string") errors.push("reply 必须是 string");
@@ -486,7 +488,7 @@ const looksLikeMachineField = (text) => {
   return false;
 };
 
-const validateActions = (actions = []) => {
+export const validateActions = (actions = []) => {
   const errors = [];
   actions.forEach((action, i) => {
     if (!isPlainObject(action)) {
@@ -511,7 +513,7 @@ const validateActions = (actions = []) => {
   return { ok: errors.length === 0, errors };
 };
 
-const normalizePayload = (payload) => ({
+export const normalizePayload = (payload) => ({
   reply: String(payload?.reply || ""),
   confidence: payload?.confidence == null ? null : Number(payload.confidence),
   needs_clarification: Boolean(payload?.needs_clarification),
@@ -521,7 +523,7 @@ const normalizePayload = (payload) => ({
   actions: Array.isArray(payload?.actions) ? payload.actions.slice(0, LIMITS.MAX_ACTIONS) : []
 });
 
-const buildRepairMessages = ({ rawText, errors, systemPrompt }) => [
+export const buildRepairMessages = ({ rawText, errors, systemPrompt }) => [
   {
     role: "system",
     name: "repairer",
@@ -639,7 +641,26 @@ const buildRoutingDetail = (actions = []) => {
 export const runCrmPipeline = async (inputText, clients, conversationHistory = [], modelProvider = "minimax", options = {}) => {
   const startedAt = Date.now();
   const stages = [];
-  const context = buildCrmPromptContext(inputText, clients, conversationHistory, options);
+
+  // 语义检索知识源（在构建 prompt 之前）
+  const { knowledgeFiles: kfRaw } = loadUserIntelligence();
+  let preRetrievedKnowledge;
+  try {
+    preRetrievedKnowledge = await retrieveRelevantKnowledge(kfRaw || [], {
+      user_message: inputText,
+      mentioned_clients: [],
+      detected_events: [],
+      intents: [],
+      conversation_summary: ''
+    });
+  } catch {
+    preRetrievedKnowledge = null;
+  }
+
+  const context = buildCrmPromptContext(inputText, clients, conversationHistory, {
+    ...options,
+    _preRetrievedKnowledge: preRetrievedKnowledge
+  });
   const llm = createLLMCaller(modelProvider);
 
   stages.push({

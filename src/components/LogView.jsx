@@ -96,7 +96,7 @@ export default function LogView({ setView, history, logDate, setLogDate, onBack,
       <div className="log-header" style={{ paddingBottom: 8 }}>
         <button onClick={() => (onBack ? onBack() : setView("voice"))} className="back-btn">← back</button>
         <span className="log-title">ACTIVITY LOG</span>
-        <div style={{ width: 40 }} />
+        <div style={{ width: 88 }} />
       </div>
 
       {/* Calendar Header */}

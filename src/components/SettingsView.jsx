@@ -2,8 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { isSupabaseEnabled, loadSettingsFromSupabase, upsertSettingsToSupabase } from "../lib/supabaseClient";
 import { getAvailableModels } from "../lib/models";
 import { analyzeMaterialWithOpenAI } from "../lib/models/openaiMaterial";
+import { analyzeScreenshotWithOpenAI } from "../lib/models/openaiVision";
 import { parseMaterialFile } from "../lib/materialParsers";
 import { normalizeKnowledgeSource } from "../lib/knowledgeSources";
+import { generateKnowledgeEmbedding } from "../lib/knowledgeEmbedding";
 
 const SETTINGS_KEY = "crm.settings.v1";
 
@@ -113,6 +115,29 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
     }
   };
 
+  const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("文件读取失败"));
+    reader.readAsDataURL(file);
+  });
+
+  const resizeImageDataUrl = (dataUrl, maxWidth = 1280, quality = 0.82) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("图片处理失败")); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => reject(new Error("图片加载失败"));
+    img.src = dataUrl;
+  });
+
   const handleKnowledgeFiles = async (fileList) => {
     const files = Array.from(fileList || []).filter(Boolean);
     if (!files.length) return;
@@ -125,19 +150,46 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
 
     for (const file of files) {
       try {
-        const parsed = await parseMaterialFile(file);
-        const analysis = await analyzeMaterialWithOpenAI({
-          filename: file.name || "upload",
-          kind: parsed.kind || "file",
-          extractedText: parsed.extractedText || "",
-          parsedPreview: parsed.parsedPreview || null
-        });
+        const isImage = String(file.type || "").startsWith("image/");
+        let analysis;
+        let extractedText = "";
+        let parsedPreview = null;
+        let fileKind = "file";
 
-        added.push(normalizeKnowledgeSource({
-          id: `knowledge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        if (isImage) {
+          // 图片文件：Vision OCR → 提取文本 → 向量化
+          const dataUrl = await readFileAsDataUrl(file);
+          const resizedUrl = await resizeImageDataUrl(dataUrl);
+          analysis = await analyzeScreenshotWithOpenAI({
+            dataUrl: resizedUrl,
+            filename: file.name || "screenshot.png"
+          });
+          // 将 OCR 结果组装为可向量化的文本
+          extractedText = [
+            analysis.summary,
+            ...(analysis.details || [])
+          ].filter(Boolean).join("\n");
+          fileKind = "screenshot";
+        } else {
+          // 文档文件：原有逻辑
+          const parsed = await parseMaterialFile(file);
+          analysis = await analyzeMaterialWithOpenAI({
+            filename: file.name || "upload",
+            kind: parsed.kind || "file",
+            extractedText: parsed.extractedText || "",
+            parsedPreview: parsed.parsedPreview || null
+          });
+          extractedText = parsed.extractedText || "";
+          parsedPreview = parsed.parsedPreview || null;
+          fileKind = parsed.kind || "file";
+        }
+
+        const sourceId = `knowledge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const normalized = normalizeKnowledgeSource({
+          id: sourceId,
           name: file.name || "upload",
           sourceType: "file",
-          kind: parsed.kind || "file",
+          kind: fileKind,
           mimeType: file.type || "",
           size: file.size || 0,
           sizeLabel: formatFileSize(file.size),
@@ -147,11 +199,27 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
           details: analysis.details,
           tags: analysis.tags,
           suggestedActions: analysis.suggestedActions,
-          promptContext: analysis.promptContext,
-          extractedText: parsed.extractedText || "",
-          parsedPreview: parsed.parsedPreview || null,
-          uploadedAt: new Date().toISOString()
-        }));
+          promptContext: isImage
+            ? [analysis.summary, ...(analysis.details || [])].filter(Boolean).join("；")
+            : analysis.promptContext,
+          extractedText,
+          parsedPreview,
+          uploadedAt: new Date().toISOString(),
+          searchKeywords: analysis.searchKeywords || []
+        });
+
+        // 后台异步生成 embedding，不阻塞 UI
+        generateKnowledgeEmbedding(normalized).then((embedding) => {
+          if (embedding && embedding.length > 0) {
+            setKnowledgeFiles((prev) => prev.map((f) =>
+              f.id === sourceId ? { ...f, embedding } : f
+            ));
+          }
+        }).catch((err) => {
+          console.warn(`[Embedding] ${file.name} 向量生成失败:`, err.message);
+        });
+
+        added.push(normalized);
       } catch (err) {
         failures.push(`${file.name || "upload"}: ${err instanceof Error ? err.message : "解析失败"}`);
       }
@@ -371,7 +439,7 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
           <input
             ref={knowledgeInputRef}
             type="file"
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.gif"
             multiple
             onChange={(e) => {
               void handleKnowledgeFiles(e.target.files);
@@ -390,7 +458,7 @@ export default function SettingsView({ setView, settingsTab, setSettingsTab, aiT
                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
              </div>
              <div className="settings-dropzone-title">Upload Knowledge Files</div>
-             <div className="settings-dropzone-desc">Drop PDFs, Word docs, Excel sheets, or CSV files here. The app will extract text and make it available to the agent every round.</div>
+             <div className="settings-dropzone-desc">Drop PDFs, Word docs, Excel sheets, CSV files, or screenshots here. Images will be processed with OCR first, then all content is vectorized for semantic search.</div>
              {knowledgeState !== "idle" && (
                <div className={`settings-knowledge-status ${knowledgeState}`}>{knowledgeMessage || "Analyzing uploaded file..."}</div>
              )}

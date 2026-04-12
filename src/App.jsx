@@ -12,8 +12,10 @@ import { applyClientAction } from "./lib/clientMutations";
 import { analyzeScreenshotWithOpenAI } from "./lib/models/openaiVision";
 import { summarizeConversationWithOpenAI } from "./lib/models/openaiSummary";
 import { analyzeMaterialWithOpenAI } from "./lib/models/openaiMaterial";
-import { runCrmPipeline } from "./lib/crmPipeline";
+import { runStagedPipeline } from "./lib/router/pipeline";
+import { createContext } from "./lib/router/context";
 import { parseMaterialFile } from "./lib/materialParsers";
+import { generateKnowledgeEmbedding } from "./lib/knowledgeEmbedding";
 import { resolveModelProviderPreference } from "./lib/modelSettings";
 
 const CLIENTS_KEY = "crm.clients.v1";
@@ -153,6 +155,8 @@ export default function App() {
   const [aiTone, setAiTone] = useState("casual");
   const [standalonePlayground, setStandalonePlayground] = useState(() => detectStandalonePlayground());
   const [dbHydrated, setDbHydrated] = useState(false);
+  const [conversationCtx, setConversationCtx] = useState(() => createContext());
+  const [detailCtxState, setDetailCtxState] = useState(() => createContext());
 
   const events = useMemo(() => EVT(clients), [clients]);
 
@@ -238,15 +242,14 @@ export default function App() {
     if (!trimmed) return;
 
     const nextUserMsg = { r: "user", t: trimmed };
-    const prevConvos = [...convos];
-    const historyTurns = toTurnHistory(prevConvos);
 
     setConvos((p) => [...p, nextUserMsg]);
     setUserText("");
     setAiTyping(true);
 
     try {
-      const result = await runCrmPipeline(trimmed, clients || [], historyTurns, getDefaultModelProvider());
+      const result = await runStagedPipeline(trimmed, clients || [], conversationCtx, getDefaultModelProvider());
+      setConversationCtx(result.ctx);
       const commitResult = applyPlaygroundActions(result.actions || []);
       const actionNote = commitResult?.applied > 0 ? `\n\n[已同步 ${commitResult.applied} 条 CRM 动作]` : "";
 
@@ -325,6 +328,7 @@ export default function App() {
     if (detailChat) return;
     setDetailChat(true);
     sessionLogIdRef.current = Date.now();
+    setDetailCtxState(createContext());
   };
 
   const detailSend = async (rawText = detailText) => {
@@ -332,20 +336,19 @@ export default function App() {
     const userMsgText = String(rawText || "").trim();
     if (!userMsgText) return;
 
-    const historyTurns = toTurnHistory(detailConvos);
-
     setDetailConvos((p) => [...p, { r: "user", t: userMsgText }]);
     setDetailText("");
     setDetailTyping(true);
 
     try {
-      const result = await runCrmPipeline(
+      const result = await runStagedPipeline(
         userMsgText,
         [sel],
-        historyTurns,
+        detailCtxState,
         getDefaultModelProvider(),
         { lockedClient: sel }
       );
+      setDetailCtxState(result.ctx);
       const commitResult = applyPlaygroundActions(result.actions || []);
       const latestSel = (result.actions || []).length > 0
         ? commitResult.workingClients?.find((client) => client.id === sel.id) || sel
@@ -427,6 +430,7 @@ export default function App() {
     setDetailConvos([]);
     setDetailText("");
     sessionLogIdRef.current = null;
+    setDetailCtxState(createContext());
   };
 
   const newConvo = () => {
@@ -452,6 +456,7 @@ export default function App() {
     }
     setConvos([]);
     setActiveTask(null);
+    setConversationCtx(createContext());
   };
 
   const persistUpserts = (clientList) => {
@@ -545,8 +550,9 @@ export default function App() {
     setClients((prev) => prev.map((client) => {
       if (client.id !== clientId) return client;
 
+      const fileEntryId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const entry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: fileEntryId,
         kind: "screenshot",
         name: file.name || "screenshot.png",
         mimeType: file.type || "image/png",
@@ -587,6 +593,29 @@ export default function App() {
       persistUpserts([changedClient]);
     }
 
+    // 异步生成 embedding（OCR 文本 → 向量化），不阻塞 UI
+    generateKnowledgeEmbedding({
+      name: file.name || "screenshot.png",
+      summary: analysis.summary,
+      details: analysis.details,
+      tags: analysis.tags,
+      promptContext: [analysis.summary, ...(analysis.details || [])].filter(Boolean).join("；")
+    }).then((embedding) => {
+      if (embedding && embedding.length > 0) {
+        setClients((prev) => prev.map((c) => {
+          if (c.id !== clientId) return c;
+          const updatedFiles = (c.files || []).map((f) =>
+            f.id === fileEntryId ? { ...f, embedding } : f
+          );
+          const updated = { ...c, files: updatedFiles };
+          persistUpserts([updated]);
+          return updated;
+        }));
+      }
+    }).catch((err) => {
+      console.warn(`[Embedding] 截图向量生成失败:`, err.message);
+    });
+
     return analysis;
   };
 
@@ -607,12 +636,13 @@ export default function App() {
     });
 
     let changedClient = null;
+    const docEntryId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     setClients((prev) => prev.map((client) => {
       if (client.id !== clientId) return client;
 
       const entry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: docEntryId,
         kind: parsedFile.kind,
         name: file.name || "document",
         mimeType: file.type || "application/octet-stream",
@@ -655,6 +685,31 @@ export default function App() {
       }
       persistUpserts([changedClient]);
     }
+
+    // 异步生成 embedding（文档文本 → 向量化），不阻塞 UI
+    generateKnowledgeEmbedding({
+      name: file.name || "document",
+      summary: analysis.summary,
+      details: analysis.details,
+      tags: analysis.tags,
+      searchKeywords: analysis.searchKeywords || [],
+      promptContext: analysis.promptContext,
+      extractedText: parsedFile.extractedText
+    }).then((embedding) => {
+      if (embedding && embedding.length > 0) {
+        setClients((prev) => prev.map((c) => {
+          if (c.id !== clientId) return c;
+          const updatedFiles = (c.files || []).map((f) =>
+            f.id === docEntryId ? { ...f, embedding } : f
+          );
+          const updated = { ...c, files: updatedFiles };
+          persistUpserts([updated]);
+          return updated;
+        }));
+      }
+    }).catch((err) => {
+      console.warn(`[Embedding] 文档向量生成失败:`, err.message);
+    });
 
     return analysis;
   };

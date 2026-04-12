@@ -66,14 +66,38 @@ export const normalizeKnowledgeSource = (value) => {
     extractedText,
     parsedPreview: value?.parsedPreview || null,
     uploadedAt: String(value?.uploadedAt || value?.createdAt || "").trim(),
-    note: String(value?.note || "").trim()
+    note: String(value?.note || "").trim(),
+    searchKeywords: normalizeList(value?.searchKeywords),
+    embedding: Array.isArray(value?.embedding) ? value.embedding : []
   };
+};
+
+/**
+ * 知识源内容丰富度评分（用于排序，分数越高内容越丰富）
+ * - 有 extractedText 或 parsedPreview 的条目最有价值
+ * - 有 promptContext / summary 次之
+ * - 有 details / tags 再次之
+ * - 有 searchKeywords / embedding 说明已经过深度分析
+ */
+const scoreKnowledgeSource = (source) => {
+  let score = 0;
+  if (source.extractedText && source.extractedText.length > 10) score += 40;
+  if (source.parsedPreview) score += 30;
+  if (source.promptContext && source.promptContext.length > 20) score += 15;
+  if (source.summary && source.summary.length > 10) score += 10;
+  if (Array.isArray(source.searchKeywords) && source.searchKeywords.length > 0) score += 8;
+  if (Array.isArray(source.embedding) && source.embedding.length > 0) score += 5;
+  if (source.details && source.details.length > 0) score += 5;
+  if (source.tags && source.tags.length > 0) score += 3;
+  if (source.note && source.note.length > 0) score += 2;
+  return score;
 };
 
 export const buildKnowledgeContext = (sources = [], maxTotalChars = DEFAULT_TOTAL_LIMIT) => {
   const normalized = (Array.isArray(sources) ? sources : [])
     .map(normalizeKnowledgeSource)
-    .filter((item) => item && item.active !== false);
+    .filter((item) => item && item.active !== false)
+    .sort((a, b) => scoreKnowledgeSource(b) - scoreKnowledgeSource(a));
 
   const items = [];
   let usedChars = 0;

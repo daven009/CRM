@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node scripts/regression.js",
+    "test:regression": "node scripts/regression.js",
+    "test:list": "node scripts/regression.js --list",
+    "benchmark:live": "node scripts/model_benchmark.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",

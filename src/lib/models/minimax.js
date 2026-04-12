@@ -3,6 +3,7 @@
  * 支持 MiniMax M2.5 等模型
  */
 import { normalizeApiKey } from './shared.js';
+import { getRuntimeEnv } from './env.js';
 
 /**
  * 构建 MiniMax API URL（可能需要 GroupId 参数）
@@ -21,11 +22,12 @@ const buildMinimaxUrl = (baseUrl, groupId) => {
  * @returns {{ model: string, requestUrl: string, call: Function, callLog: Array, getCallCount: Function }}
  */
 export const createMinimaxCaller = () => {
-  const rawApiKey = import.meta.env.VITE_MINIMAX_API_KEY || "";
+  const env = getRuntimeEnv();
+  const rawApiKey = env.VITE_MINIMAX_API_KEY || "";
   const apiKey = normalizeApiKey(rawApiKey);
-  const model = (import.meta.env.VITE_MINIMAX_MODEL || "MiniMax-M2.5").trim();
-  const baseUrl = (import.meta.env.VITE_MINIMAX_API_URL || "https://api.minimax.io/v1/text/chatcompletion_v2").trim();
-  const groupId = (import.meta.env.VITE_MINIMAX_GROUP_ID || "").trim();
+  const model = (env.VITE_MINIMAX_MODEL || "MiniMax-M2.5").trim();
+  const baseUrl = (env.VITE_MINIMAX_API_URL || "https://api.minimax.io/v1/text/chatcompletion_v2").trim();
+  const groupId = (env.VITE_MINIMAX_GROUP_ID || "").trim();
   const requestUrl = buildMinimaxUrl(baseUrl, groupId);
 
   if (!apiKey) {

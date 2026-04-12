@@ -9,6 +9,7 @@
  * 4. 需要 anthropic-version header
  */
 import { normalizeApiKey } from './shared.js';
+import { getRuntimeEnv } from './env.js';
 
 /**
  * 将 OpenAI 格式的 messages 转换为 Claude 格式
@@ -82,10 +83,11 @@ const normalizeClaudeResponse = (claudeResponse) => {
  * @returns {{ model: string, requestUrl: string, call: Function, callLog: Array, getCallCount: Function }}
  */
 export const createClaudeCaller = () => {
-  const rawApiKey = import.meta.env.VITE_CLAUDE_API_KEY || "";
+  const env = getRuntimeEnv();
+  const rawApiKey = env.VITE_CLAUDE_API_KEY || "";
   const apiKey = normalizeApiKey(rawApiKey);
-  const model = (import.meta.env.VITE_CLAUDE_MODEL || "claude-sonnet-4-20250514").trim();
-  const baseUrl = (import.meta.env.VITE_CLAUDE_API_URL || "https://api.anthropic.com/v1/messages").trim();
+  const model = (env.VITE_CLAUDE_MODEL || "claude-sonnet-4-20250514").trim();
+  const baseUrl = (env.VITE_CLAUDE_API_URL || "https://api.anthropic.com/v1/messages").trim();
   const anthropicVersion = "2023-06-01";
 
   if (!apiKey) {

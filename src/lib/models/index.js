@@ -7,3 +7,4 @@ export { createClaudeCaller } from './claude.js';
 export { createOpenAICaller } from './openai.js';
 export { extractTextFromModelResponse, normalizeApiKey } from './shared.js';
 export { MODEL_PROVIDERS, createLLMCaller, getAvailableModels } from './factory.js';
+export { createEmbeddings, embedText, cosineSimilarity, searchSimilar } from './openaiEmbedding.js';

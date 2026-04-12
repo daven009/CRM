@@ -5,6 +5,7 @@
 import { createMinimaxCaller } from './minimax.js';
 import { createClaudeCaller } from './claude.js';
 import { createOpenAICaller } from './openai.js';
+import { getRuntimeEnv } from './env.js';
 
 /**
  * 支持的模型 Provider 定义
@@ -41,11 +42,12 @@ export const MODEL_PROVIDERS = {
  * @returns {Array<{ id: string, label: string, configured: boolean, description: string }>}
  */
 export const getAvailableModels = () => {
+  const env = getRuntimeEnv();
   return Object.values(MODEL_PROVIDERS).map(provider => ({
     id: provider.id,
     label: provider.label,
     description: provider.description,
-    configured: Boolean(import.meta.env[provider.envKey])
+    configured: Boolean(env?.[provider.envKey])
   }));
 };
 

@@ -3,15 +3,17 @@
  * 支持 Chat Completions 接口
  */
 import { normalizeApiKey } from './shared.js';
+import { getRuntimeEnv } from './env.js';
 
 const buildOpenAIUrl = (baseUrl) => String(baseUrl || "").trim();
 
 export const createOpenAICaller = () => {
-  const rawApiKey = import.meta.env.VITE_OPENAI_API_KEY || "";
+  const env = getRuntimeEnv();
+  const rawApiKey = env.VITE_OPENAI_API_KEY || "";
   const apiKey = normalizeApiKey(rawApiKey);
-  const model = (import.meta.env.VITE_OPENAI_MODEL || "gpt-4o-mini").trim();
+  const model = (env.VITE_OPENAI_MODEL || "gpt-4o-mini").trim();
   const requestUrl = buildOpenAIUrl(
-    import.meta.env.VITE_OPENAI_API_URL || "https://api.openai.com/v1/chat/completions"
+    env.VITE_OPENAI_API_URL || "https://api.openai.com/v1/chat/completions"
   );
 
   if (!apiKey) {

@@ -518,3 +518,305 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .pg-chain-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .pg-chain-turn-label { font-size: 11px; font-family: 'IBM Plex Mono', monospace; color: #999; flex-shrink: 0; }
 .pg-chain-turn-input { font-size: 12px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── BENCHMARK VIEW ── */
+.benchmark-page {
+  background:
+    radial-gradient(circle at top left, rgba(192, 57, 43, 0.08), transparent 28%),
+    radial-gradient(circle at top right, rgba(26, 26, 26, 0.04), transparent 24%),
+    #faf9f7;
+}
+.benchmark-top-bar {
+  align-items: center;
+}
+.benchmark-run-all {
+  padding: 7px 12px;
+  border-radius: 18px;
+  background: #1a1a1a;
+  color: #faf9f7;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.2px;
+}
+.benchmark-run-all:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.benchmark-toolbar {
+  padding: 0 24px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.benchmark-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.benchmark-summary-item {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(0,0,0,0.05);
+}
+.benchmark-summary-value {
+  font-size: 18px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+.benchmark-summary-label {
+  margin-top: 4px;
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #999;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.benchmark-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.benchmark-select {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.85);
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #1a1a1a;
+}
+.benchmark-secondary-btn {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.85);
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #666;
+}
+.benchmark-warning {
+  margin: 0 24px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(192, 57, 43, 0.08);
+  border: 1px solid rgba(192, 57, 43, 0.14);
+  color: #8c2f23;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.benchmark-error {
+  background: rgba(26,26,26,0.05);
+  border-color: rgba(26,26,26,0.12);
+  color: #3d3d3d;
+}
+.benchmark-list {
+  flex: 1;
+  overflow: auto;
+  padding: 0 20px 92px;
+}
+.benchmark-row {
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  padding: 8px 4px 12px;
+}
+.benchmark-row-head {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  padding: 10px 0;
+}
+.benchmark-row-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.benchmark-row-index {
+  width: 28px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #bbb;
+  padding-top: 2px;
+}
+.benchmark-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.benchmark-row-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.benchmark-row-sub {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.benchmark-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.05);
+  color: #666;
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.2px;
+}
+.benchmark-input {
+  font-size: 11px;
+  color: #999;
+  line-height: 1.4;
+}
+.benchmark-row-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.benchmark-status-badge {
+  min-width: 52px;
+  text-align: center;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.benchmark-status-badge.idle { background: rgba(0,0,0,0.05); color: #999; }
+.benchmark-status-badge.running { background: rgba(59,130,246,0.12); color: #2563eb; }
+.benchmark-status-badge.pass { background: rgba(45,106,79,0.12); color: #2d6a4f; }
+.benchmark-status-badge.fail { background: rgba(192,57,43,0.12); color: #c0392b; }
+.benchmark-run-one {
+  padding: 7px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.85);
+  color: #1a1a1a;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.benchmark-row-body {
+  padding: 10px 0 2px 38px;
+}
+.benchmark-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.benchmark-detail-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.8);
+  border: 1px solid rgba(0,0,0,0.05);
+}
+.benchmark-detail-label {
+  margin-bottom: 6px;
+  font-size: 9px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #bbb;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.benchmark-detail-value {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #333;
+  word-break: break-word;
+}
+.benchmark-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.benchmark-step {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.76);
+  border: 1px solid rgba(0,0,0,0.05);
+}
+.benchmark-step-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #999;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+.benchmark-step-input {
+  color: #666;
+  text-transform: none;
+  font-size: 11px;
+}
+.benchmark-step-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.benchmark-step-col pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #333;
+  margin-top: 4px;
+  max-height: 180px;
+  overflow: auto;
+}
+.benchmark-step-label {
+  font-size: 9px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #bbb;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.benchmark-result-line {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.benchmark-final-pill {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  text-transform: uppercase;
+}
+.benchmark-final-pill.pass { background: rgba(45,106,79,0.12); color: #2d6a4f; }
+.benchmark-final-pill.fail { background: rgba(192,57,43,0.12); color: #c0392b; }
+.benchmark-result-text {
+  font-size: 12px;
+  color: #444;
+  line-height: 1.5;
+}
+.benchmark-footer-hint {
+  padding: 0 24px 18px;
+  color: #bbb;
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.benchmark-link {
+  color: #666;
+}
+.settings-back-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
