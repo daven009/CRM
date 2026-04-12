@@ -2,7 +2,7 @@ import * as XLSX from "xlsx";
 import mammoth from "mammoth";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.mjs", import.meta.url).toString();
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 const MAX_CELL_CHARS = 160;
 const MAX_SPREADSHEET_EXTRACT_CHARS = 18000;
