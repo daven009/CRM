@@ -29,7 +29,7 @@ import {
 import { buildStage1Prompt, buildStage2Prompt, buildStage3Prompt, buildStage4Prompt, buildSystemHeader } from './promptBuilder.js';
 import { fuzzySearchClients, heuristicMatch, buildClarifyQuestion, toResolvedClientProfile } from './clientResolver.js';
 import { expandEventChain } from './eventChains.js';
-import { updateFocusClient, appendMessage } from './context.js';
+import { updateFocusClient, appendMessage, getFullConversationContext } from './context.js';
 
 /* ─── helpers ──────────────────────────────────────────── */
 
@@ -135,6 +135,7 @@ const callAndParse = async (llm, messages, label, validator, systemPrompt) => {
 /**
  * 为 Stage 1 和 Stage 3 构建 messages 数组
  * 保留最近 N 轮历史消息作为 few-shot context
+ * 如果有 compressed_summary（LLM 压缩的历史摘要），注入到 system prompt 后
  */
 const buildMessagesWithHistory = (systemPrompt, ctx, userPayloadJson) => {
   const historyMessages = (ctx.recent_messages || []).slice(-6).flatMap((m, idx) => [
@@ -142,8 +143,15 @@ const buildMessagesWithHistory = (systemPrompt, ctx, userPayloadJson) => {
     { role: 'assistant', name: 'RelateAI', content: clipText(m.ai || '已处理', 800) }
   ]);
 
+  // 将 compressed_summary 注入 system prompt，提供早期对话的语义记忆
+  let enrichedSystemPrompt = systemPrompt;
+  const fullContext = getFullConversationContext(ctx);
+  if (fullContext) {
+    enrichedSystemPrompt = `${systemPrompt}\n\n## 对话记忆\n${fullContext}`;
+  }
+
   return [
-    { role: 'system', name: 'RelateAI', content: systemPrompt },
+    { role: 'system', name: 'RelateAI', content: enrichedSystemPrompt },
     ...historyMessages,
     { role: 'user', name: 'user', content: userPayloadJson }
   ];

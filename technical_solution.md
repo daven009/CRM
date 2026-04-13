@@ -19,6 +19,7 @@
 | 知识向量化 & 语义检索 | [七-B、知识向量化 & 语义检索系统](#七-b知识向量化--语义检索系统) |
 | 文件上传 & OCR 处理 | [七-C、文件上传 & OCR 处理](#七-c文件上传--ocr-处理) |
 | Benchmark 测试系统 | [九-B、Benchmark 测试系统](#九-b-benchmark-测试系统) |
+| 对话历史压缩 | [十四、渐进式 LLM 对话压缩](#十四渐进式-llm-对话压缩) |
 | 还有什么没做完 | [十、当前进展与待办](#十当前进展与待办) |
 
 ---
@@ -365,17 +366,21 @@ export function selectCapabilityModules(intents) {
 // src/lib/router/context.js
 {
   user_role: "保险中介",
-  current_date: "2026-04-12",
+  current_date: "2026-04-14",
   current_year: 2026,
   focus_client: { id: 42, name: "张伟" } | null,
-  conversation_summary: "≤200字滚动摘要",
-  recent_messages: [{ user: "...", ai: "..." }]  // 最近 10 轮
+  conversation_summary: "≤200字滚动摘要（最近3轮快照）",
+  compressed_summary: "≤300字 LLM 语义压缩摘要（渐进积累）",  // ★ 新增
+  recent_messages: [{ user: "...", ai: "..." }],  // 最近 12 轮
+  _compressing: false  // 是否正在进行 LLM 压缩（防并发）
 }
 ```
 
 上下文是**不可变**的，每次更新返回新对象：
 - `updateFocusClient(ctx, client)` → 新 ctx
 - `appendMessage(ctx, userInput, aiReply)` → 新 ctx（自动滚动摘要）
+- `maybeCompressHistory(ctx, compressFn)` → 异步 LLM 压缩，返回新 ctx 或 null（★ 新增）
+- `getFullConversationContext(ctx)` → 合并 compressed_summary + conversation_summary 供 prompt 注入（★ 新增）
 
 ### 5.3 Action 白名单
 
@@ -540,7 +545,7 @@ resolveModelProviderPreference()
 | 模块 | 用途 | 使用场景 |
 |------|------|----------|
 | `openaiVision.js` | 截图 OCR 分析 | DetailView 上传截图 / Settings KB 图片上传 |
-| `openaiSummary.js` | 对话总结 | 关闭详情对话时生成 timeline |
+| `openaiSummary.js` | 对话总结 + 语义压缩 | 关闭详情对话时生成 timeline；对话中渐进式历史压缩（★ 新增 `compressConversation`） |
 | `openaiMaterial.js` | 材料分析 | 上传 PDF/XLSX/DOCX（含 searchKeywords 生成） |
 | `openaiEmbedding.js` | 文本向量化 | 知识源上传时生成 embedding、每轮对话语义检索 |
 
@@ -894,12 +899,13 @@ export function getRuntimeEnv() { ... }
 | 材料分析 searchKeywords | ✅ | `analyzeMaterialWithOpenAI` 输出含 10-20 个细粒度检索关键词 |
 | Benchmark 测试系统 | ✅ | 11 个场景，浏览器 UI（`BenchmarkView`）+ 命令行（`scripts/regression.js`）双入口 |
 | 运行时环境适配 | ✅ | `getRuntimeEnv()` 支持 Vite / Node / globalThis 三种环境 |
+| 主对话 Focus Session 归档 | ✅ | focus 切换 / newConvo / idle 超时三种触发 → 自动归档到客户 Timeline |
+| P0/P1 稳定性修复 | ✅ | 4 项 P0 + 4 项 P1，含 Supabase 双写、闭包陈旧、mutation 等修复（详见第 13 节） |
 
 ### 10.2 🔲 待完成 / 待优化
 
 | 项目 | 优先级 | 说明 |
 |------|--------|------|
-| 对话结束 Timeline 总结 | 高 | `closeDetailChat()` 已有 OpenAI Summary，但主对话 `newConvo()` 尚未接入 |
 | 被动触发系统 | 中 | `principles.md` 中定义的"打开 app 建议"、"每日健康度重算"、"周报"尚未实现 |
 | 语音输入 | 中 | VoiceView 有录音 UI 但语音转文字尚未接 API |
 | PlaygroundView2 迁移 | 低 | 可选择也切换到新 Pipeline |
@@ -925,6 +931,7 @@ export function getRuntimeEnv() { ... }
 | 客户消歧规则 | `src/lib/router/clientResolver.js` |
 | 事件链定义 | `src/lib/router/eventChains.js` |
 | 会话上下文 | `src/lib/router/context.js` |
+| **对话历史压缩** | `src/lib/models/openaiSummary.js`（`compressConversation`）+ `src/lib/router/context.js`（`maybeCompressHistory`） |
 | Action 执行 | `src/lib/clientMutations.js` |
 | Action 校验 | `src/lib/crmPipeline.js`（`validateActions`, `ACTION_SCHEMA`） |
 | 前端调用入口 | `src/App.jsx`（`sendMsg`, `detailSend`） |
@@ -996,6 +1003,384 @@ Prompt 模板在 `src/lib/prompts/*.js` 中以 JS 字符串常量导出。修改
 ```bash
 node scripts/vectorize_storage.js
 ```
+
+---
+
+## 12. 主对话 Focus Session 自动归档
+
+### 12.1 问题背景
+
+原有系统中，主对话（Voice 页面）的对话内容不会写入到任何客户的 Timeline。只有详情页（DetailView）的对话在关闭时才会通过 `closeDetailChat` 归档。这导致：
+
+- 用户在主对话中讨论客户 A，这些沟通记录不会出现在 A 的 Timeline 上
+- 用户从客户 A 切换到 B 讨论时，A 的讨论片段完全丢失
+- `newConvo()` 时只生成 `"N轮对话，涉及XX"` 这种无信息量的摘要
+
+### 12.2 设计方案
+
+**核心概念：Focus Segment（焦点片段）**
+
+主对话按 `focus_client` 的切换自动分割为多个 **Focus Segment**。每个 Segment 对应一个客户在一段连续对话中的讨论片段。
+
+```
+对话流:  [张伟相关 4轮] → [focus切换] → [李梅相关 3轮] → [新对话]
+         ─── segment 1 ───              ─── segment 2 ───
+         归档到张伟 timeline              归档到李梅 timeline
+```
+
+**数据结构：**
+
+```js
+focusSegmentRef = useRef({
+  clientId: number | null,  // 当前 focus 客户 ID
+  clientName: string,        // 客户名称（用于摘要）
+  startIdx: number,          // 该 segment 在 convos 数组中的起始索引
+  sid: number | null         // session ID（时间戳），用于去重
+});
+```
+
+### 12.3 触发时机
+
+| 触发场景 | 行为 |
+|---------|------|
+| `sendMsg` 后 focus_client 从 A→B | 归档 A 的 segment → 开启 B 的 segment |
+| `sendMsg` 后首次获得 focus | 初始化 segment（从对话开头开始） |
+| `newConvo()` 结束对话 | 归档最后一个 focus 客户的 segment |
+
+### 12.4 归档流程
+
+```
+触发归档 → 截取 convos[startIdx:] → 异步调用 summarizeConversationWithOpenAI
+  → 生成 timeline 摘要 → 写入 client.log（src="主对话"）→ Supabase 持久化
+```
+
+**Timeline 条目结构：**
+
+```js
+{
+  sid: 1713015600000,           // session ID，去重用
+  d: 1713015600000,             // 排序时间戳
+  dt: "04.13",                  // 显示日期
+  src: "主对话",                 // 来源标记（区别于详情页的"对话"）
+  tx: "讨论了张伟的续保方案...",   // LLM 生成的摘要
+  ai: "主对话自动归档",           // 副标题
+  history: [...]                // 完整对话记录（可回看）
+}
+```
+
+### 12.5 降级策略
+
+- 如果 LLM 摘要调用失败，回退为第一条用户消息的前 24 字
+- 使用 `mainArchiveInFlightRef` 防止并发归档
+- `sid` 去重机制确保同一个 segment 不会重复写入
+
+### 12.6 Idle 超时自动结束 Session
+
+**规则**：主对话最后一次交互后 **1 分钟** 无新消息，系统自动调用 `newConvo()` 结束当前 session。
+
+**实现机制：**
+
+```
+用户发消息 → AI回复 → 启动/重置 60s 计时器
+                        ↓
+                  60s 内有新消息 → 取消旧计时器 → 重新计时
+                  60s 无新消息   → 自动调用 newConvo()
+                                   → 归档 focus segment 到 timeline
+                                   → 重置对话状态
+```
+
+**数据结构：**
+
+```js
+idleTimerRef = useRef(null);      // setTimeout ID
+newConvoRef = useRef(null);        // 始终指向最新 newConvo，避免闭包陈旧引用
+```
+
+**触发归档的三种场景：**
+
+| 场景 | 触发方式 | 归档行为 |
+|------|---------|---------|
+| 用户手动点击 "new" 按钮 | 调用 `newConvo()` | 归档最后 focus segment → 清空对话 |
+| 1 分钟 idle 超时 | 计时器回调 `newConvoRef.current()` | 同上 |
+| focus 切换（A→B） | `sendMsg` 中检测 | 归档 A 的 segment → 开启 B 的新 segment |
+
+**防护措施：**
+
+- `newConvoRef` 使用 ref 模式避免计时器回调中闭包引用过期的 `newConvo`
+- `newConvo()` 入口处先 `clearTimeout` 防止重复触发
+- 组件卸载时 `useEffect` 清理计时器，防止内存泄漏
+
+### 12.7 涉及文件
+
+| 文件 | 变更 |
+|-----|------|
+| `src/App.jsx` | 新增 `focusSegmentRef`、`mainArchiveInFlightRef`、`idleTimerRef`、`newConvoRef`；新增 `archiveFocusSegment()`、`resetIdleTimer()`；改造 `sendMsg()` 添加 focus 切换检测 + idle 计时器重置；改造 `newConvo()` 添加最后 segment 归档 + 计时器清理 |
+
+---
+
+## 13. P0/P1 稳定性 & 内存优化修复
+
+> 2026.04.13 — 共修复 4 项 P0（致命）+ 4 项 P1（重要）问题
+
+### 13.1 P0 修复项
+
+#### P0-1：Supabase 双写竞态
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | `useEffect([clients, dbHydrated])` 每次 clients 变化时做全量 `upsertClientsToSupabase(clients)`，与增量 `persistUpserts()` 产生竞态写入 |
+| **影响** | 数据丢失、Supabase 写入冲突 |
+| **修复** | 删除该 useEffect，仅保留增量 `persistUpserts()` 作为唯一 Supabase 同步通道 |
+| **文件** | `src/App.jsx` |
+
+#### P0-2：closeDetailChat LLM 调用无降级
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | `closeDetailChat` 中 `summarizeConversationWithOpenAI` 失败会导致整个归档流程中断，timeline 不写入，Supabase 不同步 |
+| **影响** | 用户关闭详情对话后数据完全丢失 |
+| **修复** | 在 LLM 调用外层添加 try/catch，失败时回退到第一条用户消息前 24 字作为摘要；提前保存 `sel.id`/`sel.n` 防止异步后引用变更；末尾添加 `persistUpserts` 确保 Supabase 同步 |
+| **文件** | `src/App.jsx` |
+
+#### P0-3：sendMsg 中 convos 闭包陈旧
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | `sendMsg` 内部引用的 `convos` 是函数定义时的快照，当 idle timer 或快速连续调用时，`convos.length` 和展开运算可能基于过时状态 |
+| **影响** | Focus segment 边界计算错误，对话消息丢失 |
+| **修复** | 新增 `convosRef = useRef(convos)` 并同步更新；`sendMsg` 内所有 `convos` 引用替换为 `convosRef.current` |
+| **文件** | `src/App.jsx` |
+
+#### P0-4：useEffect([clients, sel]) 潜在无限循环
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | `useEffect` 依赖 `[clients, sel]`，当 `setSel` 更新 sel 后又触发此 effect，可能形成更新循环 |
+| **影响** | 页面卡顿、无限渲染 |
+| **修复** | 新增 `selRef = useRef(sel)` 并同步；将 `sel` 从依赖数组中移除，effect 内使用 `selRef.current` |
+| **文件** | `src/App.jsx` |
+
+### 13.2 P1 修复项
+
+#### P1-1：Supabase 写入风暴
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | 每次 `setClients` 后立即调用 `persistUpserts`，高频操作（如批量 action）会在短时间内产生大量 Supabase 请求 |
+| **影响** | 触发 rate limit，网络阻塞 |
+| **修复** | 重写 `persistUpserts`：使用 `pendingUpsertsRef`（Map）做合并队列 + `upsertTimerRef` 实现 500ms 防抖批量写入 |
+| **文件** | `src/App.jsx` |
+
+#### P1-2：React state updater 内副作用
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | `archiveFocusSegment` 在 `setClients(prev => { ... persistUpserts(updated); return updated; })` 中调用网络请求 |
+| **影响** | 违反 React 纯函数约定，Concurrent Mode 下可能重复执行 |
+| **修复** | 将 `persistUpserts` 调用移至 `setClients` 回调之外 |
+| **文件** | `src/App.jsx` |
+
+#### P1-3：DetailView 直接 mutation
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | `saveEdit()`、`addSocial()`、`removeSocial()`、todo 完成/删除等操作直接修改 `sel` 对象属性（如 `editingTodo.t = editVal.t`、`sel.social = [...]`） |
+| **影响** | React 检测不到变更，UI 不更新或更新不一致 |
+| **修复** | 全部改为不可变更新模式：`sel.todos.map(t => t === target ? {...t, ...changes} : t)` + `commitClientUpdate({ ...sel, todos: newTodos })` |
+| **文件** | `src/components/DetailView.jsx` |
+
+#### P1-4：newConvo 中 convos 闭包陈旧
+
+| 项目 | 说明 |
+|------|------|
+| **问题** | idle timer 通过 `newConvoRef.current()` 调用 `newConvo`，但函数内 `convos` 仍是定义时的闭包快照 |
+| **影响** | 60s 无操作自动结束时，归档的对话内容可能不完整 |
+| **修复** | `newConvo` 内所有 `convos` 引用替换为 `convosRef.current` |
+| **文件** | `src/App.jsx` |
+
+### 13.3 新增 Ref 一览
+
+| Ref | 用途 | 同步方式 |
+|-----|------|---------|
+| `convosRef` | 始终持有最新 `convos` 数组 | `convosRef.current = convos`（每次渲染同步） |
+| `selRef` | 始终持有最新 `sel` 对象 | `selRef.current = sel`（每次渲染同步） |
+| `pendingUpsertsRef` | Supabase 待写入合并队列（Map） | `persistUpserts` 内部维护 |
+| `upsertTimerRef` | 防抖定时器 ID | `persistUpserts` 内部维护 |
+
+---
+
+## 14. 渐进式 LLM 对话压缩
+
+> 2026.04.14 — 替换简单截断，实现基于 LLM 的语义压缩，零信息丢失
+
+### 14.1 问题背景
+
+原有对话历史管理采用三层简单截断：
+
+| 层 | 机制 | 缺陷 |
+|----|------|------|
+| L1 | `recent_messages` 滑动窗口保留最近 10 轮 | 第 11 轮起旧对话直接丢弃，关键信息（如客户偏好、承诺）可能丢失 |
+| L2 | `conversation_summary` 取最近 3 轮各截取 50/80 字 | 仅覆盖最近 3 轮，更早的对话完全不在摘要中 |
+| L3 | `buildMessagesWithHistory` 每条截断到 800 字 | 字符级截断，可能截断在句子中间 |
+
+额外问题：`openaiSummary.js` 在 session 归档时将 `history` 数组全量拼接为 transcript，无任何截断，长对话（100+ 轮）会导致 token 溢出（`context_length_exceeded` 400 错误）。
+
+### 14.2 新架构：三级语义管理
+
+```
+┌─────────────────────────────────────────────────┐
+│  compressed_summary (LLM 语义压缩，≤300字)       │ ← 第 1~N 轮的信息精华
+│  "客户张伟：已婚有2子，关注教育金和重疾险，        │    由 compressConversation() 生成
+│   预算月5000，已约下周三面谈，需准备方案对比表"     │
+├─────────────────────────────────────────────────┤
+│  conversation_summary (最近3轮快照，≤200字)       │ ← 快速参考，同步生成
+├─────────────────────────────────────────────────┤
+│  recent_messages [最近4~12轮原文]                 │ ← 保留完整上下文
+│  { user: "...", ai: "..." }                      │
+└─────────────────────────────────────────────────┘
+```
+
+### 14.3 压缩触发机制
+
+```
+对话第 1~7 轮：正常积累在 recent_messages
+
+对话第 8 轮（达到 COMPRESS_THRESHOLD=8）触发压缩：
+  ┌──────────────────────────┐
+  │ 取前 4 轮 + 现有摘要     │ ──→ LLM 压缩 ──→ compressed_summary (≤300字)
+  │ 保留后 4 轮在原文        │     (compressConversation)
+  └──────────────────────────┘
+
+对话第 12 轮再次触发：
+  ┌──────────────────────────┐
+  │ 新增的前 4 轮            │
+  │ + 上次 compressed_       │ ──→ LLM 合并压缩 ──→ 新 compressed_summary
+  │   summary                │
+  └──────────────────────────┘
+```
+
+**关键常量：**
+
+```js
+COMPRESS_THRESHOLD = 8;     // recent_messages 积累到此数量时触发
+KEEP_AFTER_COMPRESS = 4;    // 压缩后保留的最近轮数
+MAX_TRANSCRIPT_CHARS = 3000; // transcript 最大字符数（约 2000 tokens）
+```
+
+### 14.4 核心函数
+
+#### `compressConversation()` — LLM 语义压缩
+
+```js
+// src/lib/models/openaiSummary.js
+export const compressConversation = async ({
+  existingSummary,        // 已有的压缩摘要（可为空）
+  messagesToCompress,     // 需要压缩的对话轮次 [{ user, ai }]
+  focusClientName         // 当前客户名称
+}) → Promise<string>      // ≤300 字的结构化摘要
+```
+
+**LLM Prompt 规则：**
+1. 必须保留：客户姓名、关键需求、已达成的共识/承诺、待跟进事项、重要偏好和数字
+2. 去除：寒暄、重复确认、语气词、冗余解释
+3. 如果已有历史摘要，将新对话信息合并进去，去除重复信息
+4. 输出纯中文文本，不超过 300 字
+
+**降级策略：** 无 API Key 时回退到 `fallbackCompress()`（本地截断拼接）
+
+#### `maybeCompressHistory()` — 异步压缩调度
+
+```js
+// src/lib/router/context.js
+export async function maybeCompressHistory(ctx, compressFn)
+  → Promise<ConversationContext | null>
+```
+
+- `recent_messages.length >= 8` 且非正在压缩中 → 触发
+- 取前 N-4 轮 + `compressed_summary` → 调用 `compressFn`
+- 返回新 ctx（压缩后）或 null（无需压缩/失败）
+
+#### `getFullConversationContext()` — 合并摘要供 prompt 注入
+
+```js
+// src/lib/router/context.js
+export function getFullConversationContext(ctx) → string
+// 输出格式：
+// [历史摘要] {compressed_summary}
+// [近期对话] {conversation_summary}
+```
+
+### 14.5 Pipeline 集成
+
+`buildMessagesWithHistory()`（`pipeline.js`）在构建 system prompt 时自动注入：
+
+```js
+let enrichedSystemPrompt = systemPrompt;
+const fullContext = getFullConversationContext(ctx);
+if (fullContext) {
+  enrichedSystemPrompt = `${systemPrompt}\n\n## 对话记忆\n${fullContext}`;
+}
+```
+
+最终发给 LLM 的结构：
+```
+system: 原始 prompt + "## 对话记忆\n[历史摘要] ...\n[近期对话] ..."
+history: 最近 6 轮原文（每条 ≤800 字）
+user: 当前用户输入
+```
+
+### 14.6 App.jsx 调用方式
+
+在 `sendMsg` 和 `detailSend` 中，Pipeline 返回后异步触发压缩：
+
+```js
+const result = await runStagedPipeline(...);
+setConversationCtx(result.ctx);
+
+// 异步压缩（不阻塞 UI）
+maybeCompressHistory(result.ctx, compressConversation).then((compressedCtx) => {
+  if (compressedCtx) {
+    setConversationCtx((prev) => {
+      // 竞态安全：压缩期间若有新消息，只更新 compressed_summary
+      if (prev.recent_messages.length <= result.ctx.recent_messages.length) {
+        return compressedCtx;
+      }
+      return { ...prev, compressed_summary: compressedCtx.compressed_summary };
+    });
+  }
+});
+```
+
+### 14.7 同时修复：归档摘要 token 溢出
+
+`summarizeConversationWithOpenAI` 新增智能截断：
+
+```js
+const rawTranscript = buildTranscript(history);
+const transcript = truncateTranscript(rawTranscript); // ≤3000 字
+```
+
+`truncateTranscript` 策略：保留头部 30%（开场背景）+ 尾部 70%（最新进展），中间用省略标记。
+
+### 14.8 设计特点
+
+| 特点 | 说明 |
+|------|------|
+| **零信息丢失** | 旧对话被 LLM 提炼为结构化摘要，不是简单丢弃 |
+| **非阻塞** | 压缩在 Pipeline 返回后异步执行，不影响响应速度 |
+| **竞态安全** | 压缩期间用户发新消息 → 只更新 compressed_summary，不覆盖新 recent_messages |
+| **优雅降级** | 无 API Key → 本地截断压缩；LLM 调用失败 → 保持原状 |
+| **向后兼容** | compressed_summary 是新增字段，旧上下文为空字符串不影响任何现有逻辑 |
+| **成本可控** | 压缩用 gpt-4o-mini，每次约 500 token 输入 → 150 token 输出，约 $0.0001/次 |
+
+### 14.9 涉及文件
+
+| 文件 | 变更 |
+|------|------|
+| `src/lib/models/openaiSummary.js` | 新增 `compressConversation()`、`truncateTranscript()`、`buildTranscript()`、`callLLM()`、`getLLMConfig()`；重构 `summarizeConversationWithOpenAI` 加入智能截断 |
+| `src/lib/router/context.js` | 新增 `compressed_summary` / `_compressing` 字段；新增 `maybeCompressHistory()`、`getFullConversationContext()`、`buildQuickSummary()`；`appendMessage` maxMessages 提升到 12 |
+| `src/lib/router/pipeline.js` | `buildMessagesWithHistory` 注入 `compressed_summary` 到 system prompt；新增导入 `getFullConversationContext` |
+| `src/App.jsx` | 导入 `compressConversation` + `maybeCompressHistory`；`sendMsg` 和 `detailSend` 中异步触发 LLM 压缩 |
 
 ---
 

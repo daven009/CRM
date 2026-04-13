@@ -101,18 +101,27 @@ export default function DetailView({
 
   const saveEdit = () => {
     if (editingTodo) {
-      editingTodo.t = editVal.t;
-      editingTodo.d = parseInt(editVal.d) || 0;
-      commitClientUpdate({ ...sel });
+      // P1-3: 不直接修改 editingTodo，使用不可变更新
+      const nextTodos = (sel.todos || []).map(td =>
+        td === editingTodo
+          ? { ...td, t: editVal.t, d: parseInt(editVal.d) || 0 }
+          : td
+      );
+      commitClientUpdate({ ...sel, todos: nextTodos });
       setEditingTodo(null);
     }
   };
 
   const [newSocial, setNewSocial] = React.useState("");
   const addSocial = () => {
-    if (newSocial.trim()) { sel.social = [...sel.social, newSocial.trim()]; setSel({ ...sel }); setNewSocial(""); }
+    if (newSocial.trim()) {
+      commitClientUpdate({ ...sel, social: [...(sel.social || []), newSocial.trim()] });
+      setNewSocial("");
+    }
   };
-  const removeSocial = (idx) => { sel.social = sel.social.filter((_, i) => i !== idx); setSel({ ...sel }); };
+  const removeSocial = (idx) => {
+    commitClientUpdate({ ...sel, social: (sel.social || []).filter((_, i) => i !== idx) });
+  };
   const normalizeFileEntry = (value) => {
     if (typeof value === "string") {
       return { name: value, summary: "", previewUrl: "", tags: [], details: [] };
@@ -344,7 +353,7 @@ export default function DetailView({
                         >
                           <div 
                             className="todo-circle" 
-                            onClick={(e) => { e.stopPropagation(); td.done = true; commitClientUpdate({ ...sel }); }}
+                            onClick={(e) => { e.stopPropagation(); const nextTodos = (sel.todos || []).map(t => t === td ? { ...t, done: true } : t); commitClientUpdate({ ...sel, todos: nextTodos }); }}
                             style={{ border: `1.5px solid ${td.d < 0 ? "#c0392b" : "rgba(0,0,0,0.12)"}`, cursor: "pointer" }} 
                           />
                           <div className="todo-text-wrap"><div className="todo-text">{td.t}</div></div>
@@ -357,7 +366,7 @@ export default function DetailView({
                             <div key={`d-${i}`} className="done-item done-item-flex">
                               <div 
                                 className="todo-circle todo-circle-done" 
-                                onClick={() => { td.done = false; commitClientUpdate({ ...sel }); }}
+                                onClick={() => { const nextTodos = (sel.todos || []).map(t => t === td ? { ...t, done: false } : t); commitClientUpdate({ ...sel, todos: nextTodos }); }}
                               >✓</div>
                               <div className="done-item-text">{td.t}</div>
                             </div>
@@ -591,8 +600,8 @@ export default function DetailView({
             <button
               className="edit-delete-btn"
               onClick={() => {
-                sel.todos = sel.todos.filter(t => t !== editingTodo);
-                commitClientUpdate({ ...sel });
+                const nextTodos = (sel.todos || []).filter(t => t !== editingTodo);
+                commitClientUpdate({ ...sel, todos: nextTodos });
                 setEditingTodo(null);
               }}
             >
