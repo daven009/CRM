@@ -1000,6 +1000,8 @@ export default function App() {
           addContact={addContact}
           updateContact={updateContact}
           setConvos={setConvos}
+          clients={clients}
+          conversationCtx={conversationCtx}
         />
       )}
       {view === "cards" && (
@@ -1051,6 +1053,8 @@ export default function App() {
           attachScreenshotToClient={attachDataFileToClient}
           saveDetailClient={saveDetailClient}
           removeDataFileFromClient={removeDataFileFromClient}
+          clients={clients}
+          conversationCtx={conversationCtx}
         />
       )}
       {view === "log" && (

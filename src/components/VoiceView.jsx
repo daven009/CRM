@@ -1,12 +1,58 @@
 import React, { useRef, useEffect, useState } from "react";
+import { useVoiceRecorder, formatDuration } from "../hooks/useVoiceRecorder";
+import { buildSTTPrompt } from "../lib/models/openaiTranscribe";
 
 export default function VoiceView({
   setView, setSettingsTab, setRecording, recording, userText, setUserText,
   sendMsg, aiTyping, convos, events, newConvo, markDone, handleTask, activeTask,
-  addContact, updateContact, setConvos
+  addContact, updateContact, setConvos, clients, conversationCtx
 }) {
   const scrollRef = useRef(null);
   const [topIndex, setTopIndex] = useState(0);
+
+  // Build STT prompt from clients list for better recognition
+  const sttPrompt = buildSTTPrompt(clients || [], conversationCtx);
+
+  // Real voice recorder hook
+  const {
+    state: voiceState,
+    duration: voiceDuration,
+    error: voiceError,
+    isSupported: voiceSupported,
+    startRecording: startVoice,
+    stopRecording: stopVoice,
+    cancelRecording: cancelVoice,
+  } = useVoiceRecorder({
+    onResult: (text) => {
+      setRecording(false);
+      if (text) sendMsg(text);
+    },
+    onError: (err) => {
+      setRecording(false);
+      console.warn("[Voice]", err);
+    },
+    promptHint: sttPrompt,
+    maxDuration: 60,
+  });
+
+  // Sync voiceState to parent recording state for CSS
+  useEffect(() => {
+    setRecording(voiceState === "recording");
+  }, [voiceState, setRecording]);
+
+  const handleRecordStart = (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    startVoice();
+  };
+
+  const handleRecordEnd = (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    stopVoice();
+  };
+
+  const handleRecordLeave = () => {
+    cancelVoice();
+  };
 
   // Inline contact card state
   const [contactCard, setContactCard] = useState(null); // { name, company, msgIndex }
@@ -281,8 +327,8 @@ export default function VoiceView({
         </div>
         <div className="record-row">
           <div className="record-side-slot" aria-hidden="true" />
-          <button onMouseDown={() => setRecording(true)} onMouseUp={() => { setRecording(false); sendMsg("今天该联系谁") }} onMouseLeave={() => setRecording(false)} onTouchStart={() => setRecording(true)} onTouchEnd={() => { setRecording(false); sendMsg("今天该联系谁") }} className={`record-btn ${recording ? 'active' : 'inactive'}`}>
-            <div className={`record-inner ${recording ? 'active' : 'inactive'}`} />
+          <button onMouseDown={handleRecordStart} onMouseUp={handleRecordEnd} onMouseLeave={handleRecordLeave} onTouchStart={handleRecordStart} onTouchEnd={handleRecordEnd} className={`record-btn ${voiceState === 'recording' ? 'active' : voiceState === 'transcribing' || voiceState === 'processing' ? 'processing' : 'inactive'}`} disabled={voiceState === 'transcribing' || voiceState === 'processing'}>
+            <div className={`record-inner ${voiceState === 'recording' ? 'active' : 'inactive'}`} />
           </button>
           <div className="record-side-slot record-side-slot-right">
             {convos.length > 0 && (
@@ -290,7 +336,13 @@ export default function VoiceView({
             )}
           </div>
         </div>
-        <div className="record-hint">{recording ? "listening..." : "hold to speak"}</div>
+        <div className="record-hint">
+          {voiceState === "idle" && "hold to speak"}
+          {voiceState === "recording" && `listening... ${formatDuration(voiceDuration)}`}
+          {voiceState === "processing" && "processing..."}
+          {voiceState === "transcribing" && "transcribing..."}
+          {voiceState === "error" && (voiceError || "error — tap to retry")}
+        </div>
       </div>
 
       {/* Bottom tab */}

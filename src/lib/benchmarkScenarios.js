@@ -1,4 +1,5 @@
 import { createContext } from './router/context.js';
+import { applyClientAction } from './clientMutations.js';
 
 function makeClient(id, n, co, extra = {}) {
   return {
@@ -191,21 +192,34 @@ export function getScenarioPlan(id) {
 
 export async function runScenarioPlan(plan, runner) {
   const steps = [];
+  let workingClients = null;
   let previousCtx = null;
 
   for (const step of plan.steps) {
     const ctx = step.ctx === 'previous' ? previousCtx : step.ctx;
-    const clients = clone(step.clients || []);
+    const clients = workingClients ? clone(workingClients) : clone(step.clients || []);
     const result = await runner(step.input, clients, ctx, step.options || {});
     steps.push({ ...step, result });
     previousCtx = result?.ctx || previousCtx;
+
+    // 纯内存模拟生产写入：让下一轮看到上一轮动作后的客户状态，但不写任何持久化存储。
+    let nextClients = clone(clients);
+    for (const action of result?.actions || []) {
+      const mutation = applyClientAction(nextClients, action);
+      nextClients = mutation.nextClients;
+    }
+    workingClients = nextClients;
+    if (!workingClients) {
+      workingClients = clone(clients);
+    }
   }
 
   const evaluation = plan.evaluate(steps);
   return {
     scenario: plan.scenario,
     steps,
-    evaluation
+    evaluation,
+    finalClients: workingClients || []
   };
 }
 

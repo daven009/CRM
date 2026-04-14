@@ -8,3 +8,4 @@ export { createOpenAICaller } from './openai.js';
 export { extractTextFromModelResponse, normalizeApiKey } from './shared.js';
 export { MODEL_PROVIDERS, createLLMCaller, getAvailableModels } from './factory.js';
 export { createEmbeddings, embedText, cosineSimilarity, searchSimilar } from './openaiEmbedding.js';
+export { transcribeAudio, hasTranscribeApiKey, buildSTTPrompt, isRecordingSupported } from './openaiTranscribe.js';

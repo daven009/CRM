@@ -1,4 +1,6 @@
 import React from "react";
+import { useVoiceRecorder, formatDuration } from "../hooks/useVoiceRecorder";
+import { buildSTTPrompt } from "../lib/models/openaiTranscribe";
 
 const clipText = (value, max = 32) => {
   const text = String(value || "").trim();
@@ -20,10 +22,32 @@ const summarizeHistory = (history = []) => {
 export default function DetailView({
   sel, setSel, setView, hpColor, detailChat, setDetailChat, detailConvos, setDetailConvos,
   detailText, setDetailText, detailTyping, detailSend, startNewDetailSession, closeDetailChat, recording, setRecording, detailRef,
-  attachScreenshotToClient, saveDetailClient, removeDataFileFromClient
+  attachScreenshotToClient, saveDetailClient, removeDataFileFromClient, clients, conversationCtx
 }) {
   const msgIdx = React.useRef(0);
   const [activeTab, setActiveTab] = React.useState("overview");
+
+  // Voice recorder for detail chat
+  const sttPrompt = buildSTTPrompt(clients || [], conversationCtx);
+  const {
+    state: detailVoiceState,
+    duration: detailVoiceDuration,
+    error: detailVoiceError,
+    isSupported: detailVoiceSupported,
+    startRecording: startDetailVoice,
+    stopRecording: stopDetailVoice,
+    cancelRecording: cancelDetailVoice,
+  } = useVoiceRecorder({
+    onResult: (text) => {
+      if (text) detailSend(text);
+    },
+    onError: (err) => {
+      console.warn("[DetailVoice]", err);
+    },
+    promptHint: sttPrompt,
+    maxDuration: 60,
+  });
+
   const tabIdx = activeTab === "overview" ? 0 : activeTab === "timeline" ? 1 : 2;
   const [touchStart, setTouchStart] = React.useState(null);
   const [touchEnd, setTouchEnd] = React.useState(null);
@@ -549,9 +573,29 @@ export default function DetailView({
               value={detailText}
               onChange={(e) => setDetailText(e.target.value)}
               onKeyDown={onDetailKeyDown}
-              placeholder={`Ask about ${sel.n}...`}
+              placeholder={detailVoiceState === "recording" ? `listening... ${formatDuration(detailVoiceDuration)}` : detailVoiceState === "transcribing" ? "transcribing..." : `Ask about ${sel.n}...`}
               className="detail-chat-input"
+              disabled={detailVoiceState === "recording" || detailVoiceState === "transcribing" || detailVoiceState === "processing"}
             />
+            {detailVoiceSupported && (
+              <button
+                onMouseDown={(e) => { e.preventDefault(); if (!detailChat) startNewDetailSession(); startDetailVoice(); }}
+                onMouseUp={(e) => { e.preventDefault(); stopDetailVoice(); }}
+                onMouseLeave={cancelDetailVoice}
+                onTouchStart={(e) => { e.preventDefault(); if (!detailChat) startNewDetailSession(); startDetailVoice(); }}
+                onTouchEnd={(e) => { e.preventDefault(); stopDetailVoice(); }}
+                className={`detail-chat-mic-btn ${detailVoiceState === "recording" ? "recording" : detailVoiceState === "transcribing" || detailVoiceState === "processing" ? "processing" : ""}`}
+                disabled={detailVoiceState === "transcribing" || detailVoiceState === "processing"}
+              >
+                {detailVoiceState === "recording" ? (
+                  <div className="detail-mic-recording-dot" />
+                ) : detailVoiceState === "transcribing" || detailVoiceState === "processing" ? (
+                  <div className="detail-mic-processing">{[0,1,2].map(i => <div key={i} className="dot" />)}</div>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                )}
+              </button>
+            )}
             <button onClick={() => detailSend(detailText)} className="detail-chat-send-btn" disabled={!detailText.trim() || detailTyping}>
               Send
             </button>

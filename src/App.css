@@ -52,6 +52,8 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .record-btn { width: 64px; height: 64px; border-radius: 32px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
 .record-btn.inactive { background: #1a1a1a; }
 .record-btn.active { background: #c0392b; animation: recording 1s ease infinite; }
+.record-btn.processing { background: #1a1a1a; opacity: 0.6; cursor: wait; }
+.record-btn:disabled { cursor: wait; }
 .record-inner { transition: all 0.2s; background: #faf9f7; }
 .record-inner.inactive { width: 20px; height: 20px; border-radius: 10px; }
 .record-inner.active { width: 20px; height: 20px; border-radius: 4px; }
@@ -275,6 +277,16 @@ button:active { transform: scale(0.96); opacity: 0.8; }
 .detail-chat-input { flex: 1; min-width: 0; border: 1px solid rgba(0,0,0,0.08); background: #fff; border-radius: 12px; padding: 10px 12px; font-size: 13px; outline: none; }
 .detail-chat-send-btn { border: none; background: #1a1a1a; color: #fff; border-radius: 12px; padding: 0 14px; font-size: 12px; font-family: 'IBM Plex Mono', monospace; cursor: pointer; }
 .detail-chat-send-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* ── DETAIL VIEW MIC BUTTON ── */
+.detail-chat-mic-btn { width: 38px; height: 38px; border-radius: 12px; border: 1.5px solid rgba(0,0,0,0.1); background: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: all 0.2s; color: #666; }
+.detail-chat-mic-btn:hover { border-color: rgba(0,0,0,0.2); color: #333; }
+.detail-chat-mic-btn:active { transform: scale(0.92); }
+.detail-chat-mic-btn.recording { background: #c0392b; border-color: #c0392b; color: #fff; animation: recording 1s ease infinite; }
+.detail-chat-mic-btn.processing { background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); cursor: wait; }
+.detail-chat-mic-btn:disabled { opacity: 0.5; cursor: wait; }
+.detail-mic-recording-dot { width: 10px; height: 10px; border-radius: 2px; background: #fff; animation: pulse 1s infinite; }
+.detail-mic-processing { display: flex; gap: 3px; align-items: center; }
 .edit-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.1); backdrop-filter: blur(4px); z-index: 100; }
 .edit-modal { position: absolute; top: 30%; left: 10%; width: 80%; max-width: 320px; background: #fff; border-radius: 24px; padding: 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.15); z-index: 101; animation: fadeUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
 .edit-modal-title { font-size: 9px; font-family: 'IBM Plex Mono', monospace; color: #bbb; letter-spacing: 0.5px; margin-bottom: 16px; text-transform: uppercase; }
@@ -598,6 +610,166 @@ button:active { transform: scale(0.96); opacity: 0.8; }
   font-family: 'IBM Plex Mono', monospace;
   color: #666;
 }
+.benchmark-pill-custom {
+  background: rgba(45,106,79,0.10);
+  color: #2d6a4f;
+}
+.benchmark-delete-one {
+  padding: 7px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(192,57,43,0.16);
+  background: rgba(255,255,255,0.85);
+  color: #c0392b;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.benchmark-composer {
+  margin: 0 24px 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.84);
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.04);
+}
+.benchmark-composer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.benchmark-composer-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+.benchmark-composer-subtitle {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #888;
+  line-height: 1.5;
+}
+.benchmark-composer-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.benchmark-composer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: #666;
+}
+.benchmark-composer-field span {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #aaa;
+}
+.benchmark-composer-field-wide {
+  grid-column: 1 / -1;
+}
+.benchmark-composer-input,
+.benchmark-composer-textarea {
+  width: 100%;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: rgba(255,255,255,0.92);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-family: 'Lora', 'Noto Sans SC', serif;
+  font-size: 13px;
+  color: #1a1a1a;
+  outline: none;
+}
+.benchmark-composer-textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+.benchmark-composer-input:focus,
+.benchmark-composer-textarea:focus {
+  border-color: rgba(45,106,79,0.24);
+  box-shadow: 0 0 0 2px rgba(45,106,79,0.08);
+}
+.benchmark-composer-rounds {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.benchmark-composer-round {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(250,249,247,0.92);
+  border: 1px solid rgba(0,0,0,0.05);
+}
+.benchmark-composer-round-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #777;
+}
+.benchmark-composer-link {
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #999;
+}
+.benchmark-composer-link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.benchmark-composer-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+.benchmark-custom-rounds {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+.benchmark-custom-round {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.74);
+  border: 1px solid rgba(0,0,0,0.05);
+}
+.benchmark-custom-round-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: #777;
+}
+.benchmark-custom-round-input {
+  color: #999;
+  text-transform: none;
+  font-size: 11px;
+}
+.benchmark-custom-round-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.benchmark-custom-round-col pre {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #333;
+  max-height: 160px;
+  overflow: auto;
+}
 .benchmark-warning {
   margin: 0 24px 12px;
   padding: 10px 12px;
@@ -767,6 +939,9 @@ button:active { transform: scale(0.96); opacity: 0.8; }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+.benchmark-step-col-wide {
+  grid-column: 1 / -1;
 }
 .benchmark-step-col pre {
   white-space: pre-wrap;
