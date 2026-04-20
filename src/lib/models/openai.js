@@ -1,25 +1,10 @@
 /**
  * OpenAI 模型 Provider
- * 支持 Chat Completions 接口
+ * 通过后端 API 代理调用，不再直连 OpenAI
  */
-import { normalizeApiKey } from './shared.js';
-import { getRuntimeEnv } from './env.js';
-
-const buildOpenAIUrl = (baseUrl) => String(baseUrl || "").trim();
+import { apiChat } from '../apiClient.js';
 
 export const createOpenAICaller = () => {
-  const env = getRuntimeEnv();
-  const rawApiKey = env.VITE_OPENAI_API_KEY || "";
-  const apiKey = normalizeApiKey(rawApiKey);
-  const model = (env.VITE_OPENAI_MODEL || "gpt-4o-mini").trim();
-  const requestUrl = buildOpenAIUrl(
-    env.VITE_OPENAI_API_URL || "https://api.openai.com/v1/chat/completions"
-  );
-
-  if (!apiKey) {
-    throw new Error("未配置 VITE_OPENAI_API_KEY，请先在 .env.local 中配置。");
-  }
-
   let callCount = 0;
   const callLog = [];
 
@@ -27,39 +12,16 @@ export const createOpenAICaller = () => {
     callCount += 1;
     const callId = callCount;
 
-    const resp = await fetch(requestUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({ model, messages, temperature: 0.2, stream: false })
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`OpenAI 请求失败 (${resp.status}): ${text.slice(0, 500)}`);
-    }
-
-    const body = await resp.json();
-    const apiError = body?.error;
-    if (apiError) {
-      const code = apiError?.code || apiError?.type || "unknown";
-      const msg = apiError?.message || "unknown";
-      if (code === "invalid_api_key") {
-        throw new Error(`OpenAI 鉴权失败：${msg}`);
-      }
-      throw new Error(`OpenAI 业务错误 (${code})：${msg}`);
-    }
+    const body = await apiChat(messages, { provider: "openai", temperature: 0.2 });
 
     callLog.push({ callId, label, usage: body?.usage || null });
     return body;
   };
 
   return {
-    model,
+    model: "openai-via-backend",
     provider: "openai",
-    requestUrl,
+    requestUrl: "/api/llm/chat",
     call,
     callLog,
     getCallCount: () => callCount

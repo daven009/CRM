@@ -12,5 +12,14 @@ export default defineConfig({
         benchmark: resolve(__dirname, 'benchmark.html')
       }
     }
+  },
+  server: {
+    // 开发环境：将 /api 请求代理到后端
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      }
+    }
   }
 })

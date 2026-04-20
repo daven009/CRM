@@ -12,7 +12,7 @@ import { applyClientAction } from "./lib/clientMutations";
 import { analyzeScreenshotWithOpenAI } from "./lib/models/openaiVision";
 import { summarizeConversationWithOpenAI, compressConversation } from "./lib/models/openaiSummary";
 import { analyzeMaterialWithOpenAI } from "./lib/models/openaiMaterial";
-import { runStagedPipeline } from "./lib/router/pipeline";
+import { apiPipelineRun } from "./lib/apiClient";
 import { createContext, maybeCompressHistory } from "./lib/router/context";
 import { parseMaterialFile } from "./lib/materialParsers";
 import { generateKnowledgeEmbedding } from "./lib/knowledgeEmbedding";
@@ -56,6 +56,21 @@ const clipText = (value, max = 28) => {
 };
 
 const getDefaultModelProvider = () => resolveModelProviderPreference();
+
+/** 读取用户配置（domain, keywords, knowledgeFiles）传给后端 Pipeline */
+const SETTINGS_KEY = "crm.settings.v1";
+const loadUserIntelligence = () => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { domain: "", keywords: [], knowledgeFiles: [] };
+    const parsed = JSON.parse(raw);
+    return {
+      domain: String(parsed?.domain || "").trim(),
+      keywords: Array.isArray(parsed?.keywords) ? parsed.keywords.filter(Boolean) : [],
+      knowledgeFiles: Array.isArray(parsed?.knowledgeFiles) ? parsed.knowledgeFiles.filter(Boolean) : []
+    };
+  } catch { return { domain: "", keywords: [], knowledgeFiles: [] }; }
+};
 
 const toTurnHistory = (messages = []) => {
   const turns = [];
@@ -284,7 +299,13 @@ export default function App() {
     const prevFocus = conversationCtx.focus_client;
 
     try {
-      const result = await runStagedPipeline(trimmed, clients || [], conversationCtx, getDefaultModelProvider());
+      const result = await apiPipelineRun({
+        message: trimmed,
+        context: conversationCtx,
+        clients: clients || [],
+        provider: getDefaultModelProvider(),
+        options: { userIntelligence: loadUserIntelligence() }
+      });
       setConversationCtx(result.ctx);
 
       // 异步触发 LLM 对话压缩（不阻塞 UI 和当前轮次）
@@ -308,7 +329,7 @@ export default function App() {
         t: `${result.reply || "已处理。"}${actionNote}`,
         intents: result.intents || [],
         actions: result.actions || [],
-        requestMeta: result.requestMeta || null
+        requestMeta: result.requestMeta || result.debug || null
       }]);
 
       // ── Focus 切换检测 & 自动归档 ──
@@ -429,13 +450,13 @@ export default function App() {
     setDetailTyping(true);
 
     try {
-      const result = await runStagedPipeline(
-        userMsgText,
-        [sel],
-        detailCtxState,
-        getDefaultModelProvider(),
-        { lockedClient: sel }
-      );
+      const result = await apiPipelineRun({
+        message: userMsgText,
+        context: detailCtxState,
+        clients: [sel],
+        provider: getDefaultModelProvider(),
+        options: { lockedClient: sel, userIntelligence: loadUserIntelligence() }
+      });
       setDetailCtxState(result.ctx);
 
       // 异步触发 LLM 对话压缩（详情页对话同样受益）
@@ -462,7 +483,7 @@ export default function App() {
         t: `${result.reply || "已处理。"}${actionNote}`,
         intents: result.intents || [],
         actions: result.actions || [],
-        requestMeta: result.requestMeta || null
+        requestMeta: result.requestMeta || result.debug || null
       }]);
     } catch (err) {
       setDetailConvos((prev) => [...prev, {

@@ -1,29 +1,34 @@
-import { createClient } from "@supabase/supabase-js";
+/**
+ * Supabase 数据层 — 通过后端 API 代理
+ * 
+ * Phase 2 迁移：前端不再直连 Supabase，所有数据操作通过后端 /api/data/* 路由。
+ * 接口签名保持不变，上层业务代码（App.jsx、SettingsView.jsx）无感切换。
+ */
 import { normalizeKnowledgeSource } from "./knowledgeSources";
+import {
+  apiLoadClients,
+  apiUpsertClients,
+  apiDeleteClient,
+  apiLoadSettings,
+  apiUpsertSettings,
+  apiUploadContactFile,
+  apiDeleteContactFile,
+} from "./apiClient";
 
-const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "").trim();
-const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
+/**
+ * 后端模式下始终视为 "已启用"
+ * （实际可用性由后端检测，不可用时后端返回 503）
+ */
+export const isSupabaseEnabled = () => true;
 
-let clientSingleton = null;
+/**
+ * 兼容旧代码 — 后端模式下不再暴露 Supabase Client
+ * @returns {null}
+ */
+export const getSupabaseClient = () => null;
 
-export const isSupabaseEnabled = () => Boolean(supabaseUrl && supabaseAnonKey);
-
-export const getSupabaseClient = () => {
-  if (!isSupabaseEnabled()) return null;
-  if (!clientSingleton) {
-    clientSingleton = createClient(supabaseUrl, supabaseAnonKey);
-  }
-  return clientSingleton;
-};
-
+/* ─── 行数据 ↔ 前端模型 转换（保留供脚本和测试使用）── */
 const normalizeArray = (value) => (Array.isArray(value) ? value : []);
-const SETTINGS_ROW_ID = 1;
-const CONTACT_FILES_BUCKET = "crm-contact-files";
-
-const sanitizeFilename = (name) => String(name || "file")
-  .replace(/[^a-zA-Z0-9._-]+/g, "-")
-  .replace(/-+/g, "-")
-  .replace(/^-|-$/g, "");
 
 export const fromDbClient = (row) => ({
   id: Number(row.id),
@@ -64,125 +69,68 @@ export const toDbClient = (client) => ({
   updated_at: new Date().toISOString()
 });
 
-export const loadClientsFromSupabase = async () => {
-  const supabase = getSupabaseClient();
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("crm_clients")
-    .select("*")
-    .order("id", { ascending: true });
+/* ─── Clients CRUD — 代理到后端 ────────────────────── */
 
-  if (error) throw error;
-  return (data || []).map(fromDbClient);
+/**
+ * 加载所有客户
+ * 后端已完成 DB → 前端格式转换，直接返回
+ */
+export const loadClientsFromSupabase = () => apiLoadClients();
+
+/**
+ * 批量 upsert 客户
+ */
+export const upsertClientsToSupabase = (clients) => {
+  if (!Array.isArray(clients) || clients.length === 0) return Promise.resolve();
+  return apiUpsertClients(clients);
 };
 
-export const upsertClientsToSupabase = async (clients) => {
-  const supabase = getSupabaseClient();
-  if (!supabase) return;
-
-  const payload = (clients || [])
-    .filter((c) => c && c.id != null)
-    .map(toDbClient);
-
-  if (payload.length === 0) return;
-
-  const { error } = await supabase
-    .from("crm_clients")
-    .upsert(payload, { onConflict: "id" });
-
-  if (error) throw error;
+/**
+ * 删除客户
+ */
+export const deleteClientFromSupabase = (clientId) => {
+  if (clientId == null) return Promise.resolve();
+  return apiDeleteClient(clientId);
 };
 
-export const deleteClientFromSupabase = async (clientId) => {
-  const supabase = getSupabaseClient();
-  if (!supabase || clientId == null) return;
+/* ─── Settings CRUD — 代理到后端 ───────────────────── */
 
-  const { error } = await supabase
-    .from("crm_clients")
-    .delete()
-    .eq("id", Number(clientId));
-
-  if (error) throw error;
-};
-
+/**
+ * 加载设置
+ */
 export const loadSettingsFromSupabase = async () => {
-  const supabase = getSupabaseClient();
-  if (!supabase) return null;
-
-  const { data, error } = await supabase
-    .from("crm_settings")
-    .select("*")
-    .eq("id", SETTINGS_ROW_ID)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-
+  const settings = await apiLoadSettings();
+  if (!settings) return null;
   return {
-    domain: String(data.domain || "").trim(),
-    keywords: normalizeArray(data.keywords).map((v) => String(v || "").trim()).filter(Boolean),
-    knowledgeFiles: normalizeArray(data.knowledge_files).map((item) => normalizeKnowledgeSource(item)).filter(Boolean),
-    modelProvider: String(data.model_provider || "").trim()
-  };
-};
-
-export const upsertSettingsToSupabase = async (settings = {}) => {
-  const supabase = getSupabaseClient();
-  if (!supabase) return;
-
-  const payload = {
-    id: SETTINGS_ROW_ID,
     domain: String(settings.domain || "").trim(),
     keywords: normalizeArray(settings.keywords).map((v) => String(v || "").trim()).filter(Boolean),
-    knowledge_files: normalizeArray(settings.knowledgeFiles),
-    model_provider: String(settings.modelProvider || "").trim(),
-    updated_at: new Date().toISOString()
+    knowledgeFiles: normalizeArray(settings.knowledgeFiles).map((item) => normalizeKnowledgeSource(item)).filter(Boolean),
+    modelProvider: String(settings.modelProvider || "").trim()
   };
-
-  const { error } = await supabase
-    .from("crm_settings")
-    .upsert(payload, { onConflict: "id" });
-
-  if (error) throw error;
 };
 
-export const uploadContactFileToStorage = async ({ clientId, file }) => {
-  const supabase = getSupabaseClient();
-  if (!supabase) throw new Error("未配置 Supabase，无法上传文件。");
+/**
+ * 保存设置
+ */
+export const upsertSettingsToSupabase = (settings = {}) => apiUpsertSettings(settings);
+
+/* ─── Storage — 代理到后端 ─────────────────────────── */
+
+/**
+ * 上传联系人文件
+ * @param {{ clientId: number, file: File }}
+ * @returns {Promise<{ bucket: string, path: string, publicUrl: string }>}
+ */
+export const uploadContactFileToStorage = ({ clientId, file }) => {
   if (!file) throw new Error("未选择文件。");
-
-  const timestamp = Date.now();
-  const safeName = sanitizeFilename(file.name || "upload");
-  const path = `${Number(clientId)}/${timestamp}-${safeName}`;
-
-  const { error: uploadError } = await supabase.storage
-    .from(CONTACT_FILES_BUCKET)
-    .upload(path, file, {
-      cacheControl: "3600",
-      upsert: false,
-      contentType: file.type || "application/octet-stream"
-    });
-
-  if (uploadError) throw uploadError;
-
-  const { data } = supabase.storage
-    .from(CONTACT_FILES_BUCKET)
-    .getPublicUrl(path);
-
-  return {
-    bucket: CONTACT_FILES_BUCKET,
-    path,
-    publicUrl: data?.publicUrl || ""
-  };
+  return apiUploadContactFile({ clientId, file });
 };
 
-export const deleteContactFileFromStorage = async ({ bucket = CONTACT_FILES_BUCKET, path }) => {
-  const supabase = getSupabaseClient();
-  if (!supabase || !path) return;
-
-  const { error } = await supabase.storage
-    .from(bucket || CONTACT_FILES_BUCKET)
-    .remove([path]);
-
-  if (error) throw error;
+/**
+ * 删除 Storage 文件
+ * @param {{ bucket?: string, path: string }}
+ */
+export const deleteContactFileFromStorage = ({ bucket, path }) => {
+  if (!path) return Promise.resolve();
+  return apiDeleteContactFile({ bucket, path });
 };
